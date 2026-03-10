@@ -12,3 +12,4 @@ server_id = "server-b"
 ssh_alias = "gpu-prod-b"
 working_dirs = ["/work/project-c", "/work/project-d"]
 enabled_panels = ["system", "gpu", "git", "clash"]
+

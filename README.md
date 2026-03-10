@@ -1,21 +1,28 @@
-# Server Monitor Codex
+# Server Monitor Codex (Agentless)
 
-Read-only local dashboard for monitoring two GPU cloud servers in one browser tab.
+Local dashboard for monitoring remote GPU servers over SSH aliases in a single browser tab.
 
-## Features (v1)
+## What Works Now
 
-- Near real-time server metrics (2-3s)
-- GPU usage snapshots
-- Git status for configured repos (10-15s)
-- Clash status checks
-- Single dashboard UI with websocket updates
-- Agent runs background collectors automatically at startup
+- Agentless monitoring (no remote repo clone/install needed)
+- System/GPU/Git/Clash snapshot polling over SSH
+- Live WebSocket updates in dashboard
+- Interactive settings UI:
+  - create/edit/delete servers
+  - create/edit/delete working directories
+  - toggle built-in panels per server (`system`, `gpu`, `git`, `clash`)
 
 ## Requirements
 
 - Python 3.12+
-- `uv` package manager
-- SSH key-based access from local machine to both servers
+- `uv`
+- Local SSH access to remote servers
+- SSH aliases configured in local `~/.ssh/config`
+- Remote tools available on servers:
+  - `bash`, `top`, `free`, `df`
+  - `nvidia-smi` (for GPU panel)
+  - `git` (for git panel)
+  - `pgrep` (for clash process check)
 
 ## Setup
 
@@ -23,42 +30,30 @@ Read-only local dashboard for monitoring two GPU cloud servers in one browser ta
 uv sync
 ```
 
-## Run server agent on each remote server
-
-1. Copy this project (or install package) on server.
-2. Create config from `config/agent.example.toml` (defaults assume Linux tools: `bash`, `top`, `free`, `df`, `nvidia-smi`, `git`).
-3. Start agent (bind localhost only):
+Copy settings template:
 
 ```bash
-SERVER_MONITOR_AGENT_CONFIG=config/agent.example.toml \
-uv run uvicorn server_monitor.agent.main:build_app --factory --host 127.0.0.1 --port 9000
+cp config/servers.example.toml config/servers.toml
 ```
 
-4. Verify from the server:
+Edit `config/servers.toml` with your SSH aliases and repo paths.
 
-```bash
-curl http://127.0.0.1:9000/health
-curl http://127.0.0.1:9000/snapshot
-```
-
-## Run local dashboard
-
-1. Create local config from `config/local-dashboard.example.toml`.
-2. Ensure SSH tunnels can reach each server agent port. Example:
-
-```bash
-ssh -N -L 19001:127.0.0.1:9000 user@server-a
-ssh -N -L 19002:127.0.0.1:9000 user@server-b
-```
-
-3. Save as `config/local-dashboard.toml`.
-4. Start dashboard:
+## Run
 
 ```bash
 uv run uvicorn server_monitor.dashboard.main:build_dashboard_app --factory --host 127.0.0.1 --port 8080
 ```
 
-5. Open `http://127.0.0.1:8080`.
+Open:
+
+- `http://127.0.0.1:8080`
+
+## Notes
+
+- Runtime loads `config/servers.toml` by default.
+- Override settings path with:
+  - `SERVER_MONITOR_SETTINGS_PATH=/path/to/servers.toml`
+- You can also manage most settings directly from the browser Settings tab.
 
 ## Testing
 
@@ -66,3 +61,4 @@ uv run uvicorn server_monitor.dashboard.main:build_dashboard_app --factory --hos
 uv run pytest -q
 uv run ruff check .
 ```
+
