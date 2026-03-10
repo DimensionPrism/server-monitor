@@ -1,6 +1,8 @@
 const state = {
   updates: new Map(),
   settings: null,
+  gitOps: new Map(),
+  panelOpenState: new Map(),
 };
 
 function byId(id) {
@@ -12,6 +14,73 @@ function toLines(raw) {
     .split("\n")
     .map((line) => line.trim())
     .filter((line) => line.length > 0);
+}
+
+function escapeHtml(value) {
+  return String(value)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
+function formatLastUpdate(timestampText) {
+  if (!timestampText) {
+    return "--";
+  }
+  const parsed = new Date(timestampText);
+  if (Number.isNaN(parsed.getTime())) {
+    return "--";
+  }
+  const ageSeconds = Math.max(0, Math.floor((Date.now() - parsed.getTime()) / 1000));
+  let ageLabel = `${ageSeconds}s ago`;
+  if (ageSeconds >= 3600) {
+    ageLabel = `${Math.floor(ageSeconds / 3600)}h ago`;
+  } else if (ageSeconds >= 60) {
+    ageLabel = `${Math.floor(ageSeconds / 60)}m ago`;
+  }
+  return `${parsed.toLocaleTimeString()} (${ageLabel})`;
+}
+
+function renderLastUpdateLine(timestampText) {
+  return `<div class="muted panel-updated">Last update: ${escapeHtml(formatLastUpdate(timestampText))}</div>`;
+}
+
+function clampPercent(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) {
+    return 0;
+  }
+  return Math.max(0, Math.min(100, number));
+}
+
+function repoKey(serverId, repoPath) {
+  return `${serverId}::${repoPath}`;
+}
+
+function readGitOpState(serverId, repoPath) {
+  return state.gitOps.get(repoKey(serverId, repoPath));
+}
+
+function writeGitOpState(serverId, repoPath, phase, message) {
+  state.gitOps.set(repoKey(serverId, repoPath), { phase, message });
+}
+
+function panelStateKey(serverId, groupClass) {
+  return `${serverId}::${groupClass}`;
+}
+
+function readPanelOpenState(serverId, groupClass, defaultOpen) {
+  const key = panelStateKey(serverId, groupClass);
+  if (!state.panelOpenState.has(key)) {
+    return defaultOpen;
+  }
+  return state.panelOpenState.get(key) === true;
+}
+
+function writePanelOpenState(serverId, groupClass, isOpen) {
+  state.panelOpenState.set(panelStateKey(serverId, groupClass), isOpen);
 }
 
 function setTabs() {
@@ -32,6 +101,137 @@ function setTabs() {
   settingsBtn.addEventListener("click", () => activate("settings"));
 }
 
+function metricBar(label, value) {
+  const percent = clampPercent(value);
+  const valueText = Number.isFinite(Number(value)) ? `${Number(value).toFixed(1)}%` : "--";
+  return `
+    <div class="meter-row">
+      <div class="meter-label">${escapeHtml(label)}</div>
+      <div class="meter-track"><div class="meter-fill" style="width:${percent}%"></div></div>
+      <div class="meter-value">${valueText}</div>
+    </div>
+  `;
+}
+
+function renderPanelGroup(title, contentHtml, options = {}) {
+  const groupClass = options.groupClass ? `panel-group panel-group-${options.groupClass}` : "panel-group";
+  const serverId = String(options.serverId || "");
+  const groupName = String(options.groupClass || "unknown");
+  const shouldOpen = readPanelOpenState(serverId, groupName, options.open === true);
+  const openAttr = shouldOpen ? " open" : "";
+  return `
+    <details class="${groupClass}" data-panel-server-id="${escapeHtml(serverId)}" data-panel-group="${escapeHtml(groupName)}"${openAttr}>
+      <summary>${escapeHtml(title)}</summary>
+      <div class="panel-group-body">${contentHtml}</div>
+    </details>
+  `;
+}
+
+function renderSystemPanel(snapshot) {
+  const systemLastUpdated = snapshot && snapshot.metadata ? snapshot.metadata.system_last_updated_at : null;
+  return `
+    ${metricBar("CPU", snapshot.cpu_percent)}
+    ${metricBar("Memory", snapshot.memory_percent)}
+    ${metricBar("Disk", snapshot.disk_percent)}
+    <div class="muted">Net RX/TX: ${snapshot.network_rx_kbps ?? "--"} / ${snapshot.network_tx_kbps ?? "--"} KB/s</div>
+    ${renderLastUpdateLine(systemLastUpdated)}
+  `;
+}
+
+function renderGpuPanel(snapshot) {
+  const gpus = Array.isArray(snapshot.gpus) ? snapshot.gpus : [];
+  const gpuLastUpdated = snapshot && snapshot.metadata ? snapshot.metadata.gpu_last_updated_at : null;
+  if (gpus.length === 0) {
+    return `<div class="muted">No GPU metrics.</div>${renderLastUpdateLine(gpuLastUpdated)}`;
+  }
+
+  const rows = gpus
+    .map((gpu) => {
+      const utilization = gpu.utilization_gpu_percent ?? gpu.utilization_gpu;
+      const memoryUsed = gpu.memory_used_mib ?? gpu.memory_used_mb;
+      const memoryTotal = gpu.memory_total_mib ?? gpu.memory_total_mb;
+      const memoryUtil =
+        gpu.memory_utilization_percent ??
+        (Number.isFinite(Number(memoryUsed)) && Number.isFinite(Number(memoryTotal)) && Number(memoryTotal) > 0
+          ? (Number(memoryUsed) / Number(memoryTotal)) * 100
+          : 0);
+      const temperature = gpu.temperature_celsius ?? gpu.temperature_c;
+
+      return `
+      <div class="gpu-card">
+        <div class="gpu-head">GPU ${gpu.index}: ${escapeHtml(gpu.name || "unknown")}</div>
+        ${metricBar("Util", utilization)}
+        ${metricBar("Mem", memoryUtil)}
+        <div class="muted">Temp: ${temperature ?? "--"} C, VRAM: ${memoryUsed ?? "--"}/${memoryTotal ?? "--"} MiB</div>
+      </div>
+    `;
+    })
+    .join("\n");
+
+  return `<div class="gpu-grid">${rows}</div>${renderLastUpdateLine(gpuLastUpdated)}`;
+}
+
+function renderClashPanel(clash) {
+  const running = clash && clash.running ? "running" : "stopped";
+  const message = clash && clash.message ? clash.message : "--";
+  return `
+    <div class="kv"><span>Status</span><strong>${escapeHtml(running)}</strong></div>
+    <div class="kv"><span>API</span><strong>${clash && clash.api_reachable ? "reachable" : "unreachable"}</strong></div>
+    <div class="kv"><span>UI</span><strong>${clash && clash.ui_reachable ? "reachable" : "unreachable"}</strong></div>
+    <div class="kv"><span>Message</span><strong>${escapeHtml(message)}</strong></div>
+    ${renderLastUpdateLine(clash && clash.last_updated_at)}
+  `;
+}
+
+function repoSummary(repo) {
+  const dirtyClass = repo.dirty ? "warn" : "ok";
+  const dirtyLabel = repo.dirty ? "dirty" : "clean";
+  return `
+    <div class="repo-summary">
+      <span class="badge">${escapeHtml(repo.branch || "unknown")}</span>
+      <span class="badge ${dirtyClass}">${dirtyLabel}</span>
+      <span class="badge">ahead ${repo.ahead ?? 0}</span>
+      <span class="badge">behind ${repo.behind ?? 0}</span>
+      <span class="badge">staged ${repo.staged ?? 0}</span>
+      <span class="badge">unstaged ${repo.unstaged ?? 0}</span>
+      <span class="badge">untracked ${repo.untracked ?? 0}</span>
+    </div>
+  `;
+}
+
+function renderGitPanel(update) {
+  const repos = Array.isArray(update.repos) ? update.repos : [];
+  if (repos.length === 0) {
+    return '<div class="muted">No configured repositories.</div>';
+  }
+
+  const rows = repos
+    .map((repo) => {
+      const opState = readGitOpState(update.server_id, repo.path);
+      const statusClass = opState ? `git-op-status ${opState.phase}` : "git-op-status";
+      const statusText = opState ? escapeHtml(opState.message) : "idle";
+      const safePath = escapeHtml(repo.path);
+      return `
+        <div class="git-repo" data-server-id="${escapeHtml(update.server_id)}" data-repo-path="${safePath}">
+          <div class="git-repo-path">${safePath}</div>
+          ${repoSummary(repo)}
+          ${renderLastUpdateLine(repo.last_updated_at)}
+          <div class="git-actions">
+            <button class="btn-pill" type="button" data-git-op="refresh">Refresh</button>
+            <button class="btn-pill" type="button" data-git-op="fetch">Fetch</button>
+            <button class="btn-pill" type="button" data-git-op="pull">Pull</button>
+            <input class="branch-input" data-role="branch" type="text" placeholder="branch/name" />
+            <button class="btn-pill" type="button" data-git-op="checkout">Checkout</button>
+          </div>
+          <div class="${statusClass}">${statusText}</div>
+        </div>
+      `;
+    })
+    .join("\n");
+
+  return `<div class="git-repo-list">${rows}</div>`;
+}
+
 function renderMonitor() {
   const grid = byId("monitor-grid");
   const cards = [];
@@ -44,58 +244,39 @@ function renderMonitor() {
   for (const update of state.updates.values()) {
     const panels = new Set(update.enabled_panels || ["system", "gpu", "git", "clash"]);
     const snapshot = update.snapshot || {};
-    const repoText = JSON.stringify(update.repos || [], null, 2);
-    const clashText = JSON.stringify(update.clash || {}, null, 2);
-    const gpuText = JSON.stringify(snapshot.gpus || [], null, 2);
     const stale = update.stale ? "yes" : "no";
 
     let html = `
-      <article class="card">
-        <h3>${update.server_id}</h3>
-        <div class="muted">stale: ${stale}</div>
+      <article class="card server-card">
+        <header class="server-card-head">
+          <h3>${escapeHtml(update.server_id)}</h3>
+          <div class="muted">stale: ${stale}</div>
+        </header>
     `;
 
     if (panels.has("system")) {
-      html += `
-        <section class="panel">
-          <h4>System</h4>
-          <pre>CPU: ${snapshot.cpu_percent ?? "--"}%\nMEM: ${snapshot.memory_percent ?? "--"}%\nDISK: ${snapshot.disk_percent ?? "--"}%\nNET RX/TX: ${snapshot.network_rx_kbps ?? "--"} / ${snapshot.network_tx_kbps ?? "--"}</pre>
-        </section>
-      `;
+      html += renderPanelGroup("System", renderSystemPanel(snapshot), { groupClass: "system", open: true, serverId: update.server_id });
     }
 
     if (panels.has("gpu")) {
-      html += `
-        <section class="panel">
-          <h4>GPU</h4>
-          <pre>${gpuText}</pre>
-        </section>
-      `;
+      html += renderPanelGroup("GPU", renderGpuPanel(snapshot), { groupClass: "gpu", open: true, serverId: update.server_id });
     }
 
     if (panels.has("git")) {
-      html += `
-        <section class="panel">
-          <h4>Git</h4>
-          <pre>${repoText}</pre>
-        </section>
-      `;
+      html += renderPanelGroup("Git", renderGitPanel(update), { groupClass: "git", open: false, serverId: update.server_id });
     }
 
     if (panels.has("clash")) {
-      html += `
-        <section class="panel">
-          <h4>Clash</h4>
-          <pre>${clashText}</pre>
-        </section>
-      `;
+      html += renderPanelGroup("Clash", renderClashPanel(update.clash || {}), { groupClass: "clash", open: false, serverId: update.server_id });
     }
 
     html += "</article>";
     cards.push(html);
   }
 
-  grid.innerHTML = cards.join("\n");
+  grid.innerHTML = `<div class="server-board">${cards.join("\n")}</div>`;
+  bindPanelGroupEvents();
+  bindGitControlEvents();
 }
 
 async function api(method, url, body) {
@@ -115,6 +296,96 @@ async function api(method, url, body) {
   }
 
   return response.json();
+}
+
+function updateRepoInState(serverId, repo) {
+  const current = state.updates.get(serverId);
+  if (!current) {
+    return;
+  }
+
+  const repos = Array.isArray(current.repos) ? current.repos.slice() : [];
+  const index = repos.findIndex((item) => item.path === repo.path);
+  if (index >= 0) {
+    repos[index] = repo;
+  } else {
+    repos.push(repo);
+  }
+  current.repos = repos;
+  state.updates.set(serverId, current);
+}
+
+async function runGitOperation(serverId, repoPath, operation, branch) {
+  writeGitOpState(serverId, repoPath, "running", `${operation} running...`);
+  renderMonitor();
+
+  const payload = { repo_path: repoPath, operation };
+  if (operation === "checkout") {
+    payload.branch = (branch || "").trim();
+    if (!payload.branch) {
+      writeGitOpState(serverId, repoPath, "fail", "checkout requires branch name");
+      renderMonitor();
+      return;
+    }
+  }
+
+  try {
+    const response = await api("POST", `/api/servers/${encodeURIComponent(serverId)}/git/ops`, payload);
+    if (response && response.repo) {
+      updateRepoInState(serverId, response.repo);
+    }
+    const stderr = response && typeof response.stderr === "string" ? response.stderr.trim() : "";
+    const errorHint = stderr ? `: ${stderr.split("\n")[0]}` : "";
+    const message = response && response.ok ? `${operation} ok` : `${operation} failed${errorHint}`;
+    writeGitOpState(serverId, repoPath, response && response.ok ? "ok" : "fail", message);
+  } catch (err) {
+    writeGitOpState(serverId, repoPath, "fail", `${operation} failed: ${err.message}`);
+  }
+
+  renderMonitor();
+}
+
+function bindGitControlEvents() {
+  const buttons = document.querySelectorAll("button[data-git-op]");
+  buttons.forEach((button) => {
+    if (button.dataset.bound === "1") {
+      return;
+    }
+    button.dataset.bound = "1";
+    button.addEventListener("click", async () => {
+      const repoNode = button.closest(".git-repo");
+      if (!repoNode) {
+        return;
+      }
+      const serverId = repoNode.getAttribute("data-server-id");
+      const repoPath = repoNode.getAttribute("data-repo-path");
+      const operation = button.getAttribute("data-git-op");
+      const branchInput = repoNode.querySelector('input[data-role="branch"]');
+      const branch = branchInput ? branchInput.value : "";
+      if (!serverId || !repoPath || !operation) {
+        return;
+      }
+      await runGitOperation(serverId, repoPath, operation, branch);
+    });
+  });
+}
+
+function bindPanelGroupEvents() {
+  const groups = document.querySelectorAll("details[data-panel-server-id][data-panel-group]");
+  groups.forEach((group) => {
+    if (group.dataset.bound === "1") {
+      return;
+    }
+    group.dataset.bound = "1";
+    group.addEventListener("toggle", () => {
+      const serverId = group.getAttribute("data-panel-server-id");
+      const panelGroup = group.getAttribute("data-panel-group");
+      if (!serverId || !panelGroup) {
+        return;
+      }
+      writePanelOpenState(serverId, panelGroup, group.open);
+    });
+  });
 }
 
 function serverEditorTemplate(server) {

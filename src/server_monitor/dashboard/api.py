@@ -43,6 +43,15 @@ class PanelsPayload(BaseModel):
     enabled_panels: list[str]
 
 
+class GitOpPayload(BaseModel):
+    repo_path: str
+    operation: str
+    branch: str | None = None
+
+
+SAFE_GIT_OPERATIONS = {"refresh", "fetch", "pull", "checkout"}
+
+
 def _serialize_settings(settings: DashboardSettings) -> dict:
     return {
         "metrics_interval_seconds": settings.metrics_interval_seconds,
@@ -70,6 +79,12 @@ def _find_server(settings: DashboardSettings, server_id: str) -> ServerSettings:
         if server.server_id == server_id:
             return server
     raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"unknown server '{server_id}'")
+
+
+def _require_git_runtime(runtime):
+    if runtime is None or not hasattr(runtime, "run_git_operation"):
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="git operations unavailable")
+    return runtime
 
 
 def create_dashboard_app(*, ws_hub: WebSocketHub, runtime=None, settings_store: DashboardSettingsStore | None = None) -> FastAPI:
@@ -155,6 +170,27 @@ def create_dashboard_app(*, ws_hub: WebSocketHub, runtime=None, settings_store: 
         server.enabled_panels = payload.enabled_panels
         store.update_server(server_id, server)
         return _serialize_settings(store.load())
+
+    @app.post("/api/servers/{server_id}/git/ops")
+    async def run_git_op(server_id: str, payload: GitOpPayload) -> dict:
+        if payload.operation not in SAFE_GIT_OPERATIONS:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"unsupported operation '{payload.operation}'",
+            )
+
+        git_runtime = _require_git_runtime(runtime)
+        try:
+            return await git_runtime.run_git_operation(
+                server_id=server_id,
+                repo_path=payload.repo_path,
+                operation=payload.operation,
+                branch=payload.branch,
+            )
+        except KeyError as exc:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
     @app.get("/")
     def index() -> FileResponse:
