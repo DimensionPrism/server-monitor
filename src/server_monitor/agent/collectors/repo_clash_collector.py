@@ -27,11 +27,16 @@ class RepoClashCollector:
         self.git_status_cmd = git_status_cmd
         self.clash_status_cmd = clash_status_cmd
 
+    def _build_git_command(self, repo_path: str) -> list[str]:
+        if any("{repo}" in token for token in self.git_status_cmd):
+            return [token.replace("{repo}", repo_path) for token in self.git_status_cmd]
+        return [*self.git_status_cmd, repo_path]
+
     async def collect_once(self, *, now: datetime | None = None) -> None:
         timestamp = now or datetime.now(UTC)
         repos: list[dict] = []
         for repo_path in self.repo_paths:
-            result = await self.runner.run([*self.git_status_cmd, repo_path])
+            result = await self.runner.run(self._build_git_command(repo_path))
             if result.exit_code != 0 or result.error:
                 continue
             repos.append(
@@ -48,4 +53,3 @@ class RepoClashCollector:
         clash_result = await self.runner.run(self.clash_status_cmd)
         if clash_result.exit_code == 0 and not clash_result.error:
             self.store.update_clash(parse_clash_status(clash_result.stdout), timestamp=timestamp)
-

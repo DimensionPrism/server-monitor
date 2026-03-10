@@ -2,15 +2,31 @@
 
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 
 from server_monitor.agent.snapshot_store import SnapshotStore
 
 
-def create_app(store: SnapshotStore) -> FastAPI:
+def _build_lifespan(runtime):
+    @asynccontextmanager
+    async def _lifespan(_app: FastAPI):
+        if runtime is not None:
+            await runtime.start()
+        try:
+            yield
+        finally:
+            if runtime is not None:
+                await runtime.stop()
+
+    return _lifespan
+
+
+def create_app(store: SnapshotStore, runtime=None) -> FastAPI:
     """Build the read-only monitoring API."""
 
-    app = FastAPI(title="Server Monitor Agent")
+    app = FastAPI(title="Server Monitor Agent", lifespan=_build_lifespan(runtime))
 
     @app.get("/health")
     def health() -> dict[str, str]:
@@ -29,4 +45,3 @@ def create_app(store: SnapshotStore) -> FastAPI:
         return store.snapshot.clash.model_dump(mode="json")
 
     return app
-
