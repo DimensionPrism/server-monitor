@@ -80,6 +80,8 @@ Notes:
 - Git operations are restricted to repo paths declared in each server's `working_dirs`.
 - No destructive git commands are exposed in the UI/API.
 - The planned one-click Clash UI tunnel-open flow is not implemented yet.
+- Intermittent long SSH status cycles can still take roughly 24-32 seconds and temporarily flip freshness to `CACHED` or Clash to `secret-unavailable`.
+- That SSH stall behavior is separate from the Clash probe URL configuration. When a status cycle completes normally with the new probe URLs, Clash should report `api_reachable=true`, `ui_reachable=true`, and `message=ok`.
 
 ## Testing
 
