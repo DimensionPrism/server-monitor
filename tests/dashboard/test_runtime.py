@@ -45,6 +45,17 @@ class _FakeExecutor:
         return _Result("CPU: 11.0\nMEM: 22.0\nDISK: 33.0\nRX_KBPS: 0\nTX_KBPS: 0")
 
 
+class _FailFirstExecutor:
+    def __init__(self):
+        self.calls = []
+
+    async def run(self, alias: str, remote_command: str):
+        self.calls.append((alias, remote_command))
+        if len(self.calls) == 1:
+            return _Result("", stderr="ssh timeout", exit_code=255, error="timeout")
+        return _Result("unexpected")
+
+
 @pytest.mark.asyncio
 async def test_runtime_poll_once_broadcasts_agentless_update():
     from server_monitor.dashboard.runtime import DashboardRuntime
@@ -113,3 +124,36 @@ async def test_runtime_respects_panel_toggles():
 
     assert len(executor.calls) == 1
     assert "nvidia-smi" not in executor.calls[0][1]
+
+
+@pytest.mark.asyncio
+async def test_runtime_short_circuits_when_ssh_unreachable():
+    from server_monitor.dashboard.runtime import DashboardRuntime
+    from server_monitor.dashboard.ws_hub import WebSocketHub
+
+    settings = DashboardSettings(
+        servers=[
+            ServerSettings(
+                server_id="server-c",
+                ssh_alias="srv-c",
+                working_dirs=["/work/repo-c"],
+                enabled_panels=["system", "gpu", "git", "clash"],
+            )
+        ]
+    )
+
+    hub = WebSocketHub()
+    ws = _FakeWebSocket()
+    await hub.connect(ws)
+    executor = _FailFirstExecutor()
+
+    runtime = DashboardRuntime(
+        hub=hub,
+        settings_store=_FakeSettingsStore(settings),
+        executor=executor,
+    )
+
+    await runtime.poll_once()
+
+    assert len(executor.calls) == 1
+    assert ws.messages[0]["snapshot"]["metadata"]["ssh_error"] != ""

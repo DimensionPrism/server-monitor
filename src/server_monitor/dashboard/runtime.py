@@ -28,7 +28,7 @@ class SshCommandExecutor:
     """Execute remote commands over SSH aliases."""
 
     def __init__(self, *, runner: CommandRunner | None = None) -> None:
-        self.runner = runner or CommandRunner(timeout_seconds=8.0)
+        self.runner = runner or CommandRunner(timeout_seconds=3.0)
 
     async def run(self, alias: str, remote_command: str):
         return await self.runner.run(["ssh", alias, remote_command])
@@ -104,20 +104,29 @@ class DashboardRuntime:
             "gpus": [],
             "metadata": {},
         }
+        host_unreachable = False
 
         if "system" in enabled:
             system_result = await self.executor.run(server.ssh_alias, _system_command())
             if system_result.exit_code == 0 and not system_result.error:
                 snapshot.update(parse_system_snapshot(system_result.stdout))
             else:
-                snapshot["metadata"]["metrics_error"] = system_result.error or system_result.stderr or "system failed"
+                error_text = system_result.error or system_result.stderr or "system failed"
+                snapshot["metadata"]["metrics_error"] = error_text
+                if _is_ssh_unreachable(system_result):
+                    snapshot["metadata"]["ssh_error"] = error_text
+                    host_unreachable = True
 
-        if "gpu" in enabled:
+        if "gpu" in enabled and not host_unreachable:
             gpu_result = await self.executor.run(server.ssh_alias, _gpu_command())
             if gpu_result.exit_code == 0 and not gpu_result.error:
                 snapshot["gpus"] = parse_gpu_snapshot(gpu_result.stdout)
             else:
-                snapshot["metadata"]["gpu_error"] = gpu_result.error or gpu_result.stderr or "gpu failed"
+                error_text = gpu_result.error or gpu_result.stderr or "gpu failed"
+                snapshot["metadata"]["gpu_error"] = error_text
+                if _is_ssh_unreachable(gpu_result):
+                    snapshot["metadata"]["ssh_error"] = error_text
+                    host_unreachable = True
 
         repos = self._repo_cache.get(server.server_id, [])
         clash = self._clash_cache.get(server.server_id, DEFAULT_CLASH)
@@ -128,7 +137,7 @@ class DashboardRuntime:
             interval_seconds=status_interval_seconds,
         )
 
-        if should_poll_status and ("git" in enabled or "clash" in enabled):
+        if should_poll_status and ("git" in enabled or "clash" in enabled) and not host_unreachable:
             if "git" in enabled:
                 repos = await self._poll_git_repos(server)
                 self._repo_cache[server.server_id] = repos
@@ -181,6 +190,21 @@ def _needs_status_poll(*, last: datetime | None, now: datetime, interval_seconds
     if last is None:
         return True
     return (now - last).total_seconds() >= interval_seconds
+
+
+def _is_ssh_unreachable(result) -> bool:
+    blob = f"{result.error or ''} {result.stderr or ''}".lower()
+    return any(
+        token in blob
+        for token in [
+            "timeout",
+            "timed out",
+            "could not resolve hostname",
+            "connection refused",
+            "network is unreachable",
+            "no route to host",
+        ]
+    )
 
 
 def _shell_quote(value: str) -> str:
