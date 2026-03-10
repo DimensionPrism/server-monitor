@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
@@ -11,10 +12,24 @@ from fastapi.staticfiles import StaticFiles
 from server_monitor.dashboard.ws_hub import WebSocketHub
 
 
-def create_dashboard_app(*, ws_hub: WebSocketHub) -> FastAPI:
+def _build_lifespan(runtime):
+    @asynccontextmanager
+    async def _lifespan(_app: FastAPI):
+        if runtime is not None:
+            await runtime.start()
+        try:
+            yield
+        finally:
+            if runtime is not None:
+                await runtime.stop()
+
+    return _lifespan
+
+
+def create_dashboard_app(*, ws_hub: WebSocketHub, runtime=None) -> FastAPI:
     """Create FastAPI app exposing health and websocket routes."""
 
-    app = FastAPI(title="Server Monitor Dashboard")
+    app = FastAPI(title="Server Monitor Dashboard", lifespan=_build_lifespan(runtime))
     static_dir = Path(__file__).with_name("static")
     app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
