@@ -12,6 +12,8 @@ def test_root_serves_dashboard_html():
 
     assert response.status_code == 200
     assert "Server Settings" in response.text
+    assert "new-clash-api-probe-url" in response.text
+    assert "new-clash-ui-probe-url" in response.text
 
 
 def test_app_js_includes_safe_git_ops_controls():
@@ -173,3 +175,17 @@ def test_styles_css_has_freshness_badge_rules():
     assert ".freshness-badge" in response.text
     assert ".freshness-live" in response.text
     assert ".freshness-cached" in response.text
+
+
+def test_app_js_wires_clash_probe_url_settings_fields():
+    from server_monitor.dashboard.api import create_dashboard_app
+    from server_monitor.dashboard.ws_hub import WebSocketHub
+
+    app = create_dashboard_app(ws_hub=WebSocketHub())
+    client = TestClient(app)
+
+    response = client.get("/static/app.js")
+
+    assert response.status_code == 200
+    assert "clash_api_probe_url" in response.text
+    assert "clash_ui_probe_url" in response.text

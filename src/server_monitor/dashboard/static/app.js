@@ -5,6 +5,9 @@ const state = {
   panelOpenState: new Map(),
 };
 
+const DEFAULT_CLASH_API_PROBE_URL = "http://127.0.0.1:9090/version";
+const DEFAULT_CLASH_UI_PROBE_URL = "http://127.0.0.1:9090/ui";
+
 function byId(id) {
   return document.getElementById(id);
 }
@@ -421,6 +424,8 @@ function bindPanelGroupEvents() {
 function serverEditorTemplate(server) {
   const panelSet = new Set(server.enabled_panels || []);
   const dirs = (server.working_dirs || []).join("\n");
+  const clashApiProbeUrl = server.clash_api_probe_url || DEFAULT_CLASH_API_PROBE_URL;
+  const clashUiProbeUrl = server.clash_ui_probe_url || DEFAULT_CLASH_UI_PROBE_URL;
   return `
     <div class="server-editor" data-server-id="${server.server_id}">
       <h3>${server.server_id}</h3>
@@ -431,6 +436,14 @@ function serverEditorTemplate(server) {
       <label>
         Working Directories (one per line)
         <textarea data-field="working_dirs" rows="4">${dirs}</textarea>
+      </label>
+      <label>
+        Clash API Probe URL
+        <input data-field="clash_api_probe_url" type="text" value="${clashApiProbeUrl}" />
+      </label>
+      <label>
+        Clash UI Probe URL
+        <input data-field="clash_ui_probe_url" type="text" value="${clashUiProbeUrl}" />
       </label>
       <fieldset>
         <legend>Enabled Panels</legend>
@@ -455,6 +468,8 @@ function bindServerEditorEvents() {
     editor.querySelector('[data-action="save"]').addEventListener("click", async () => {
       const alias = editor.querySelector('[data-field="ssh_alias"]').value.trim();
       const dirsRaw = editor.querySelector('[data-field="working_dirs"]').value;
+      const clashApiProbeUrl = (editor.querySelector('[data-field="clash_api_probe_url"]').value || "").trim() || DEFAULT_CLASH_API_PROBE_URL;
+      const clashUiProbeUrl = (editor.querySelector('[data-field="clash_ui_probe_url"]').value || "").trim() || DEFAULT_CLASH_UI_PROBE_URL;
       const enabledPanels = Array.from(editor.querySelectorAll("input[data-panel]:checked")).map((el) => el.getAttribute("data-panel"));
       const workingDirs = toLines(dirsRaw);
       try {
@@ -463,6 +478,8 @@ function bindServerEditorEvents() {
           ssh_alias: alias,
           working_dirs: workingDirs,
           enabled_panels: enabledPanels,
+          clash_api_probe_url: clashApiProbeUrl,
+          clash_ui_probe_url: clashUiProbeUrl,
         });
         statusEl.textContent = "Saved";
         await loadSettings();
@@ -503,12 +520,16 @@ async function loadSettings() {
 
 function bindAddServerForm() {
   const form = byId("add-server-form");
+  byId("new-clash-api-probe-url").value = DEFAULT_CLASH_API_PROBE_URL;
+  byId("new-clash-ui-probe-url").value = DEFAULT_CLASH_UI_PROBE_URL;
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
 
     const serverId = byId("new-server-id").value.trim();
     const alias = byId("new-server-alias").value.trim();
     const dirs = toLines(byId("new-server-dirs").value);
+    const clashApiProbeUrl = (byId("new-clash-api-probe-url").value || "").trim() || DEFAULT_CLASH_API_PROBE_URL;
+    const clashUiProbeUrl = (byId("new-clash-ui-probe-url").value || "").trim() || DEFAULT_CLASH_UI_PROBE_URL;
     const panels = Array.from(document.querySelectorAll('input[name="new-panel"]:checked')).map((el) => el.value);
 
     await api("POST", "/api/servers", {
@@ -516,9 +537,13 @@ function bindAddServerForm() {
       ssh_alias: alias,
       working_dirs: dirs,
       enabled_panels: panels,
+      clash_api_probe_url: clashApiProbeUrl,
+      clash_ui_probe_url: clashUiProbeUrl,
     });
 
     form.reset();
+    byId("new-clash-api-probe-url").value = DEFAULT_CLASH_API_PROBE_URL;
+    byId("new-clash-ui-probe-url").value = DEFAULT_CLASH_UI_PROBE_URL;
     document.querySelectorAll('input[name="new-panel"]').forEach((el) => {
       el.checked = true;
     });
