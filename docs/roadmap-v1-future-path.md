@@ -1,10 +1,16 @@
 # Server Monitor Future Path (Post-v1)
 
+## v1.1 Status
+
+`v1.1` is only partially implemented in the current codebase.
+
+- Landed: freshness badges (`LIVE`/`CACHED`) for dashboard panels and repo rows.
+- Landed: real secret-aware Clash API/UI reachability checks with configurable probe URLs.
+- Remaining: one-click Clash UI tunnel-open flow from the dashboard.
+
 ## Short-Term TODO (1-3 weeks)
 
-1. Add explicit freshness badges (`LIVE` vs `CACHED`) on System/GPU/Git/Clash sections and per repo row.
-2. Implement real Clash reachability checks instead of placeholder booleans (`api_reachable`, `ui_reachable`).
-3. Add one-click Clash UI tunnel open flow from dashboard (agentless SSH local forward).
+1. Add one-click Clash UI tunnel open flow from dashboard (agentless SSH local forward).
 4. Add command latency and error-rate telemetry in UI (per server command health strip).
 5. Improve retry and timeout strategy per command type (GPU/System/Git/Clash) with bounded backoff.
 6. Add lightweight notification hooks for failures (desktop toast + optional webhook).
@@ -22,7 +28,7 @@
 
 ## Release Sequencing
 
-1. `v1.1`: Freshness UX + Clash real checks + tunnel open.
+1. `v1.1`: Finish tunnel open and package the already-landed freshness UX + Clash real checks into a complete release.
 2. `v1.2`: Reliability and diagnostics (timeouts/retries/health/notifications).
 3. `v1.3`: Historical data + policy controls.
 4. `v2.0`: Multi-user and plugin-oriented architecture.
