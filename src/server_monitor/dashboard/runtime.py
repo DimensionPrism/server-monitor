@@ -220,7 +220,29 @@ class DashboardRuntime:
                     self._poll_git_repos(server, previous_repos=previous_repos, polled_at_iso=now.isoformat())
                 )
             if "clash" in enabled:
-                status_tasks["clash"] = asyncio.create_task(self.executor.run(server.ssh_alias, _clash_command()))
+                secret_result = await self.executor.run(server.ssh_alias, _clash_secret_command())
+                secret_text = secret_result.stdout if secret_result.exit_code == 0 and not secret_result.error else ""
+                secret = _extract_clash_secret(secret_text)
+                if secret:
+                    status_tasks["clash"] = asyncio.create_task(
+                        self.executor.run(
+                            server.ssh_alias,
+                            _clash_command(
+                                api_probe_url=server.clash_api_probe_url,
+                                ui_probe_url=server.clash_ui_probe_url,
+                                secret=secret,
+                            ),
+                        )
+                    )
+                else:
+                    clash_updated_at = now.isoformat()
+                    clash["api_reachable"] = False
+                    clash["ui_reachable"] = False
+                    clash["message"] = "secret-unavailable"
+                    clash["last_updated_at"] = clash_updated_at
+                    self._clash_cache[server.server_id] = clash
+                    self._clash_last_updated_at[server.server_id] = clash_updated_at
+                    self._clash_last_poll_ok[server.server_id] = False
 
             status_results: dict[str, object] = {}
             if status_tasks:
@@ -639,6 +661,10 @@ def _extract_clash_secret(output: str) -> str | None:
                 if secret:
                     return secret
     return None
+
+
+def _clash_secret_command() -> str:
+    return "clashsecret"
 
 
 def _clash_command(

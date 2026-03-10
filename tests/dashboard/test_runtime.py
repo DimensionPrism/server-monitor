@@ -38,6 +38,8 @@ class _FakeExecutor:
     async def run(self, alias: str, remote_command: str):
         self.calls.append((alias, remote_command))
 
+        if "clashsecret" in remote_command:
+            return _Result("😼 当前密钥：mysecret")
         if "nvidia-smi" in remote_command:
             return _Result("0, NVIDIA A100, 70, 1024, 40960, 50")
         if "git -C" in remote_command:
@@ -111,6 +113,8 @@ class _DelayedExecutor:
     async def run(self, alias: str, remote_command: str, timeout_seconds: float | None = None):
         self.calls.append((alias, remote_command, timeout_seconds))
         await asyncio.sleep(self.delay_seconds)
+        if "clashsecret" in remote_command:
+            return _Result("😼 当前密钥：mysecret")
         if "nvidia-smi" in remote_command:
             return _Result("0, NVIDIA A100, 70, 1024, 40960, 50")
         if "git -C" in remote_command:
@@ -147,6 +151,8 @@ class _SystemPollErrorExecutor:
         self.calls.append((alias, remote_command, timeout_seconds))
         if "CPU=$(top -bn1" in remote_command:
             return _Result("", stderr="timeout", exit_code=-1, error="timeout")
+        if "clashsecret" in remote_command:
+            return _Result("😼 当前密钥：mysecret")
         if "nvidia-smi" in remote_command:
             return _Result("0, NVIDIA A100, 70, 1024, 40960, 50")
         if "git -C" in remote_command:
@@ -171,6 +177,32 @@ class _MixedRepoFreshnessExecutor:
         if "/work/repo-ok" in remote_command:
             return _Result("## main...origin/main\n M README.md\n")
         return _Result("", stderr="unknown command", exit_code=1, error="unknown command")
+
+
+class _SecretAwareClashExecutor:
+    def __init__(self):
+        self.calls = []
+
+    async def run(self, alias: str, remote_command: str, timeout_seconds: float | None = None):
+        self.calls.append((alias, remote_command, timeout_seconds))
+        if "clashsecret" in remote_command:
+            return _Result("😼 当前密钥：mysecret")
+        if "pgrep -f clash" in remote_command:
+            return _Result("running=true\napi_reachable=true\nui_reachable=true\nmessage=ok")
+        return _Result("")
+
+
+class _MissingSecretClashExecutor:
+    def __init__(self):
+        self.calls = []
+
+    async def run(self, alias: str, remote_command: str, timeout_seconds: float | None = None):
+        self.calls.append((alias, remote_command, timeout_seconds))
+        if "clashsecret" in remote_command:
+            return _Result("no secret")
+        if "pgrep -f clash" in remote_command:
+            return _Result("running=true\napi_reachable=true\nui_reachable=true\nmessage=ok")
+        return _Result("")
 
 
 @pytest.mark.asyncio
@@ -775,3 +807,73 @@ def test_clash_command_includes_bearer_header_for_api_and_ui():
     assert cmd.count("-H \"$AUTH_HEADER\"") >= 2
     assert "127.0.0.1:9090/version" in cmd
     assert "127.0.0.1:9090/ui" in cmd
+
+
+@pytest.mark.asyncio
+async def test_runtime_clash_probe_uses_secret_command_each_status_cycle():
+    from server_monitor.dashboard.runtime import DashboardRuntime
+    from server_monitor.dashboard.ws_hub import WebSocketHub
+
+    settings = DashboardSettings(
+        metrics_interval_seconds=3.0,
+        status_interval_seconds=0.0,
+        servers=[
+            ServerSettings(
+                server_id="server-clash-secret-cycle",
+                ssh_alias="srv-clash-secret-cycle",
+                working_dirs=[],
+                enabled_panels=["clash"],
+            )
+        ],
+    )
+
+    hub = WebSocketHub()
+    ws = _FakeWebSocket()
+    await hub.connect(ws)
+    executor = _SecretAwareClashExecutor()
+    runtime = DashboardRuntime(
+        hub=hub,
+        settings_store=_FakeSettingsStore(settings),
+        executor=executor,
+    )
+
+    await runtime.poll_once()
+    await runtime.poll_once()
+
+    secret_calls = [call for call in executor.calls if "clashsecret" in call[1]]
+    assert len(secret_calls) >= 2
+
+
+@pytest.mark.asyncio
+async def test_runtime_clash_probe_sets_unreachable_when_secret_unavailable():
+    from server_monitor.dashboard.runtime import DashboardRuntime
+    from server_monitor.dashboard.ws_hub import WebSocketHub
+
+    settings = DashboardSettings(
+        metrics_interval_seconds=3.0,
+        status_interval_seconds=0.0,
+        servers=[
+            ServerSettings(
+                server_id="server-clash-secret-missing",
+                ssh_alias="srv-clash-secret-missing",
+                working_dirs=[],
+                enabled_panels=["clash"],
+            )
+        ],
+    )
+
+    hub = WebSocketHub()
+    ws = _FakeWebSocket()
+    await hub.connect(ws)
+    runtime = DashboardRuntime(
+        hub=hub,
+        settings_store=_FakeSettingsStore(settings),
+        executor=_MissingSecretClashExecutor(),
+    )
+
+    await runtime.poll_once()
+
+    payload = ws.messages[0]
+    assert payload["clash"]["api_reachable"] is False
+    assert payload["clash"]["ui_reachable"] is False
+    assert payload["clash"]["message"] == "secret-unavailable"
