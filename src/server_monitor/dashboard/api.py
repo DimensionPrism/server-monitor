@@ -33,6 +33,8 @@ class ServerPayload(BaseModel):
     ssh_alias: str
     working_dirs: list[str] = []
     enabled_panels: list[str] = ["system", "gpu", "git", "clash"]
+    clash_api_probe_url: str = "http://127.0.0.1:9090/version"
+    clash_ui_probe_url: str = "http://127.0.0.1:9090/ui"
 
 
 class PathPayload(BaseModel):
@@ -62,6 +64,8 @@ def _serialize_settings(settings: DashboardSettings) -> dict:
                 "ssh_alias": server.ssh_alias,
                 "working_dirs": server.working_dirs,
                 "enabled_panels": server.enabled_panels,
+                "clash_api_probe_url": server.clash_api_probe_url,
+                "clash_ui_probe_url": server.clash_ui_probe_url,
             }
             for server in settings.servers
         ],
@@ -113,6 +117,8 @@ def create_dashboard_app(*, ws_hub: WebSocketHub, runtime=None, settings_store: 
                     ssh_alias=payload.ssh_alias,
                     working_dirs=payload.working_dirs,
                     enabled_panels=payload.enabled_panels,
+                    clash_api_probe_url=payload.clash_api_probe_url,
+                    clash_ui_probe_url=payload.clash_ui_probe_url,
                 )
             )
         except ValueError as exc:
@@ -132,6 +138,8 @@ def create_dashboard_app(*, ws_hub: WebSocketHub, runtime=None, settings_store: 
                     ssh_alias=payload.ssh_alias,
                     working_dirs=payload.working_dirs,
                     enabled_panels=payload.enabled_panels,
+                    clash_api_probe_url=payload.clash_api_probe_url,
+                    clash_ui_probe_url=payload.clash_ui_probe_url,
                 ),
             )
         except KeyError as exc:

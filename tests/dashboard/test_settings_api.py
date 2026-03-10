@@ -63,6 +63,8 @@ def test_settings_api_crud_server(tmp_path):
             "ssh_alias": "server-a",
             "working_dirs": ["/work/repo-a"],
             "enabled_panels": ["system", "gpu", "git", "clash"],
+            "clash_api_probe_url": "http://127.0.0.1:9091/version",
+            "clash_ui_probe_url": "http://127.0.0.1:9091/ui",
         },
     )
     assert create_resp.status_code == 201
@@ -74,6 +76,8 @@ def test_settings_api_crud_server(tmp_path):
             "ssh_alias": "server-a-updated",
             "working_dirs": ["/work/repo-a"],
             "enabled_panels": ["system", "git"],
+            "clash_api_probe_url": "http://127.0.0.1:9092/version",
+            "clash_ui_probe_url": "http://127.0.0.1:9092/ui",
         },
     )
     assert update_resp.status_code == 200
@@ -81,6 +85,8 @@ def test_settings_api_crud_server(tmp_path):
     after_update = client.get("/api/settings").json()
     assert after_update["servers"][0]["ssh_alias"] == "server-a-updated"
     assert after_update["servers"][0]["enabled_panels"] == ["system", "git"]
+    assert after_update["servers"][0]["clash_api_probe_url"] == "http://127.0.0.1:9092/version"
+    assert after_update["servers"][0]["clash_ui_probe_url"] == "http://127.0.0.1:9092/ui"
 
     delete_resp = client.delete("/api/servers/srv-a")
     assert delete_resp.status_code == 204
@@ -112,6 +118,8 @@ def test_settings_api_working_dir_and_panel_updates(tmp_path):
     body = client.get("/api/settings").json()
     assert body["servers"][0]["working_dirs"] == ["/work/repo-b"]
     assert body["servers"][0]["enabled_panels"] == ["system", "git"]
+    assert body["servers"][0]["clash_api_probe_url"] == "http://127.0.0.1:9090/version"
+    assert body["servers"][0]["clash_ui_probe_url"] == "http://127.0.0.1:9090/ui"
 
     remove_dir = client.request("DELETE", "/api/servers/srv-b/working-dirs", json={"path": "/work/repo-b"})
     assert remove_dir.status_code == 200
