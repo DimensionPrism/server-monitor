@@ -1,46 +1,161 @@
 body {
   margin: 0;
   font-family: "Segoe UI", Tahoma, sans-serif;
-  background: #0f172a;
-  color: #e2e8f0;
+  background: linear-gradient(140deg, #0b1220, #111827);
+  color: #e5e7eb;
 }
 
 .page-header {
-  padding: 1rem 1.5rem;
-  border-bottom: 1px solid #334155;
-  background: #111827;
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  align-items: center;
+  padding: 1rem 1.25rem;
+  border-bottom: 1px solid #273449;
+  background: rgba(15, 23, 42, 0.95);
 }
 
 .page-header h1 {
   margin: 0;
-  font-size: 1.5rem;
+  font-size: 1.4rem;
 }
 
 .page-header p {
   margin: 0.2rem 0 0;
-  color: #94a3b8;
+  color: #9ca3af;
+}
+
+.tabs {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.tab {
+  border: 1px solid #334155;
+  background: #111827;
+  color: #cbd5e1;
+  border-radius: 6px;
+  padding: 0.45rem 0.8rem;
+  cursor: pointer;
+}
+
+.tab.active {
+  background: #1d4ed8;
+  border-color: #1d4ed8;
+  color: #ffffff;
+}
+
+main {
+  padding: 1rem;
+}
+
+.view {
+  display: none;
+}
+
+.view.active {
+  display: block;
 }
 
 .grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-  gap: 1rem;
-  padding: 1rem;
+  grid-template-columns: repeat(auto-fit, minmax(290px, 1fr));
+  gap: 0.9rem;
+}
+
+.card {
+  border: 1px solid #334155;
+  border-radius: 10px;
+  background: #0f172a;
+  padding: 0.85rem;
+}
+
+.card h3 {
+  margin: 0 0 0.5rem;
 }
 
 .panel {
-  background: #1e293b;
   border: 1px solid #334155;
   border-radius: 8px;
-  padding: 1rem;
+  padding: 0.55rem;
+  margin-top: 0.55rem;
+  background: #111827;
 }
 
-.panel h2 {
-  margin-top: 0;
+.panel h4 {
+  margin: 0 0 0.35rem;
+  font-size: 0.95rem;
+}
+
+.muted {
+  color: #94a3b8;
 }
 
 pre {
   margin: 0;
   white-space: pre-wrap;
+  font-size: 0.84rem;
 }
 
+.settings-form,
+.server-editor {
+  border: 1px solid #334155;
+  border-radius: 10px;
+  background: #0f172a;
+  padding: 0.85rem;
+  margin-bottom: 0.8rem;
+}
+
+.settings-form label,
+.server-editor label {
+  display: block;
+  margin-bottom: 0.6rem;
+  font-size: 0.9rem;
+}
+
+.settings-form input,
+.server-editor input,
+.settings-form textarea,
+.server-editor textarea {
+  width: 100%;
+  margin-top: 0.25rem;
+  box-sizing: border-box;
+  border: 1px solid #334155;
+  border-radius: 6px;
+  background: #111827;
+  color: #e5e7eb;
+  padding: 0.45rem;
+}
+
+.settings-form fieldset,
+.server-editor fieldset {
+  border: 1px solid #334155;
+  border-radius: 8px;
+  margin: 0.5rem 0;
+  padding: 0.5rem;
+}
+
+.settings-form button,
+.server-editor button {
+  border: 0;
+  border-radius: 6px;
+  padding: 0.45rem 0.75rem;
+  cursor: pointer;
+  margin-right: 0.4rem;
+}
+
+.btn-primary {
+  background: #1d4ed8;
+  color: #ffffff;
+}
+
+.btn-danger {
+  background: #b91c1c;
+  color: #ffffff;
+}
+
+.status {
+  margin-top: 0.2rem;
+  font-size: 0.8rem;
+  color: #93c5fd;
+}

@@ -11,4 +11,4 @@ def test_root_serves_dashboard_html():
     response = client.get("/")
 
     assert response.status_code == 200
-    assert "Server A" in response.text
+    assert "Server Settings" in response.text

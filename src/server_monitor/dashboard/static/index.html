@@ -8,57 +8,51 @@
   </head>
   <body>
     <header class="page-header">
-      <h1>Cloud Server Monitor</h1>
-      <p>Read-only live status for both GPU servers</p>
+      <div>
+        <h1>Cloud Server Monitor</h1>
+        <p>Agentless SSH monitoring in one local dashboard</p>
+      </div>
+      <nav class="tabs">
+        <button id="tab-monitor" class="tab active" type="button">Monitor</button>
+        <button id="tab-settings" class="tab" type="button">Settings</button>
+      </nav>
     </header>
 
-    <main class="grid">
-      <section class="panel">
-        <h2>Server A</h2>
-        <div id="server-a-metrics" class="metrics">
-          <div>CPU: --</div>
-          <div>MEM: --</div>
-          <div>DISK: --</div>
-          <div>NET RX/TX: -- / --</div>
-        </div>
+    <main>
+      <section id="view-monitor" class="view active">
+        <div id="monitor-grid" class="grid"></div>
       </section>
 
-      <section class="panel">
-        <h2>Server B</h2>
-        <div id="server-b-metrics" class="metrics">
-          <div>CPU: --</div>
-          <div>MEM: --</div>
-          <div>DISK: --</div>
-          <div>NET RX/TX: -- / --</div>
-        </div>
-      </section>
+      <section id="view-settings" class="view">
+        <h2>Server Settings</h2>
 
-      <section class="panel">
-        <h2>GPU Status</h2>
-        <pre id="gpu-status">Waiting for updates...</pre>
-      </section>
+        <form id="add-server-form" class="settings-form">
+          <label>
+            Server ID
+            <input id="new-server-id" type="text" required placeholder="server-a" />
+          </label>
+          <label>
+            SSH Alias
+            <input id="new-server-alias" type="text" required placeholder="gpu-prod-a" />
+          </label>
+          <label>
+            Working Directories (one per line)
+            <textarea id="new-server-dirs" rows="4" placeholder="/work/repo-a"></textarea>
+          </label>
+          <fieldset>
+            <legend>Enabled Panels</legend>
+            <label><input type="checkbox" name="new-panel" value="system" checked /> System</label>
+            <label><input type="checkbox" name="new-panel" value="gpu" checked /> GPU</label>
+            <label><input type="checkbox" name="new-panel" value="git" checked /> Git</label>
+            <label><input type="checkbox" name="new-panel" value="clash" checked /> Clash</label>
+          </fieldset>
+          <button type="submit">Add Server</button>
+        </form>
 
-      <section class="panel">
-        <h2>Git Repositories</h2>
-        <pre id="repo-status">Waiting for updates...</pre>
-      </section>
-
-      <section class="panel">
-        <h2>Clash Status</h2>
-        <pre id="clash-status">Waiting for updates...</pre>
-      </section>
-
-      <section class="panel">
-        <h2>Quick Links</h2>
-        <ul>
-          <li>SSH Server A</li>
-          <li>SSH Server B</li>
-          <li>Clash UI access instructions</li>
-        </ul>
+        <div id="settings-list" class="settings-list"></div>
       </section>
     </main>
 
     <script src="/static/app.js"></script>
   </body>
 </html>
-
