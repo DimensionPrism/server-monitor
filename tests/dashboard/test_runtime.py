@@ -139,6 +139,23 @@ class _FlakyMetricsExecutor:
         return _Result("", stderr="timeout", exit_code=-1, error="timeout")
 
 
+class _SystemPollErrorExecutor:
+    def __init__(self):
+        self.calls = []
+
+    async def run(self, alias: str, remote_command: str, timeout_seconds: float | None = None):
+        self.calls.append((alias, remote_command, timeout_seconds))
+        if "CPU=$(top -bn1" in remote_command:
+            return _Result("", stderr="timeout", exit_code=-1, error="timeout")
+        if "nvidia-smi" in remote_command:
+            return _Result("0, NVIDIA A100, 70, 1024, 40960, 50")
+        if "git -C" in remote_command:
+            return _Result("## main...origin/main\n M README.md\n")
+        if "pgrep -f clash" in remote_command:
+            return _Result("running=true\napi_reachable=false\nui_reachable=false\nmessage=ok")
+        return _Result("")
+
+
 @pytest.mark.asyncio
 async def test_runtime_poll_once_broadcasts_agentless_update():
     from server_monitor.dashboard.runtime import DashboardRuntime
@@ -609,3 +626,75 @@ async def test_runtime_keeps_repo_last_updated_timestamp_when_repo_uses_cache():
     second_ts = ws.messages[1]["repos"][0]["last_updated_at"]
     assert isinstance(first_ts, str)
     assert second_ts == first_ts
+
+
+@pytest.mark.asyncio
+async def test_runtime_emits_panel_freshness_live_on_success():
+    from server_monitor.dashboard.runtime import DashboardRuntime
+    from server_monitor.dashboard.ws_hub import WebSocketHub
+
+    settings = DashboardSettings(
+        metrics_interval_seconds=1.0,
+        status_interval_seconds=0.0,
+        servers=[
+            ServerSettings(
+                server_id="server-fresh-live",
+                ssh_alias="srv-fresh-live",
+                working_dirs=["/work/repo-fresh-live"],
+                enabled_panels=["system", "gpu", "git", "clash"],
+            )
+        ],
+    )
+
+    hub = WebSocketHub()
+    ws = _FakeWebSocket()
+    await hub.connect(ws)
+
+    runtime = DashboardRuntime(
+        hub=hub,
+        settings_store=_FakeSettingsStore(settings),
+        executor=_FakeExecutor(),
+    )
+
+    await runtime.poll_once()
+
+    payload = ws.messages[0]
+    assert payload["freshness"]["system"]["state"] == "live"
+    assert payload["freshness"]["gpu"]["state"] == "live"
+    assert payload["freshness"]["git"]["state"] == "live"
+    assert payload["freshness"]["clash"]["state"] == "live"
+
+
+@pytest.mark.asyncio
+async def test_runtime_marks_system_freshness_cached_on_poll_error():
+    from server_monitor.dashboard.runtime import DashboardRuntime
+    from server_monitor.dashboard.ws_hub import WebSocketHub
+
+    settings = DashboardSettings(
+        metrics_interval_seconds=1.0,
+        status_interval_seconds=10.0,
+        servers=[
+            ServerSettings(
+                server_id="server-fresh-system-error",
+                ssh_alias="srv-fresh-system-error",
+                working_dirs=[],
+                enabled_panels=["system"],
+            )
+        ],
+    )
+
+    hub = WebSocketHub()
+    ws = _FakeWebSocket()
+    await hub.connect(ws)
+
+    runtime = DashboardRuntime(
+        hub=hub,
+        settings_store=_FakeSettingsStore(settings),
+        executor=_SystemPollErrorExecutor(),
+    )
+
+    await runtime.poll_once()
+
+    payload = ws.messages[0]
+    assert payload["freshness"]["system"]["state"] == "cached"
+    assert payload["freshness"]["system"]["reason"] == "poll_error"

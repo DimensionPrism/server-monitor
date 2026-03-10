@@ -61,9 +61,15 @@ class DashboardRuntime:
         self._system_last_updated_at: dict[str, str] = {}
         self._gpu_cache: dict[str, list[dict]] = {}
         self._gpu_last_updated_at: dict[str, str] = {}
+        self._git_last_updated_at: dict[str, str] = {}
         self._repo_cache: dict[str, list[dict]] = {}
         self._clash_cache: dict[str, dict] = {}
         self._clash_last_updated_at: dict[str, str] = {}
+        self._system_last_poll_ok: dict[str, bool] = {}
+        self._gpu_last_poll_ok: dict[str, bool] = {}
+        self._git_last_poll_ok: dict[str, bool] = {}
+        self._clash_last_poll_ok: dict[str, bool] = {}
+        self._repo_last_poll_ok: dict[str, dict[str, bool]] = {}
 
     async def start(self) -> None:
         if self._task is not None:
@@ -87,6 +93,7 @@ class DashboardRuntime:
             self._poll_server(
                 server=server,
                 now=now,
+                metrics_interval_seconds=settings.metrics_interval_seconds,
                 status_interval_seconds=settings.status_interval_seconds,
             )
             for server in settings.servers
@@ -113,6 +120,7 @@ class DashboardRuntime:
         *,
         server: ServerSettings,
         now: datetime,
+        metrics_interval_seconds: float,
         status_interval_seconds: float,
     ) -> None:
         enabled = set(server.enabled_panels)
@@ -159,9 +167,11 @@ class DashboardRuntime:
                     self._system_cache[server.server_id] = parsed_system
                     system_updated_at = now.isoformat()
                     self._system_last_updated_at[server.server_id] = system_updated_at
+                    self._system_last_poll_ok[server.server_id] = True
                     snapshot["metadata"]["system_last_updated_at"] = system_updated_at
             else:
                 error_text = system_result.error or system_result.stderr or "system failed"
+                self._system_last_poll_ok[server.server_id] = False
                 snapshot["metadata"]["metrics_error"] = error_text
                 if _is_ssh_unreachable(system_result):
                     snapshot["metadata"]["ssh_error"] = error_text
@@ -179,9 +189,11 @@ class DashboardRuntime:
                     self._gpu_cache[server.server_id] = parsed_gpus
                     gpu_updated_at = now.isoformat()
                     self._gpu_last_updated_at[server.server_id] = gpu_updated_at
+                    self._gpu_last_poll_ok[server.server_id] = True
                     snapshot["metadata"]["gpu_last_updated_at"] = gpu_updated_at
             else:
                 error_text = gpu_result.error or gpu_result.stderr or "gpu failed"
+                self._gpu_last_poll_ok[server.server_id] = False
                 snapshot["metadata"]["gpu_error"] = error_text
                 if _is_ssh_unreachable(gpu_result):
                     snapshot["metadata"]["ssh_error"] = error_text
@@ -218,9 +230,12 @@ class DashboardRuntime:
 
             if "git" in status_results:
                 polled_repos, successful_polls = status_results["git"]
+                total_repos = len(server.working_dirs)
+                self._git_last_poll_ok[server.server_id] = successful_polls == total_repos
                 if successful_polls > 0 or len(previous_repos) == 0:
                     repos = polled_repos
                     self._repo_cache[server.server_id] = polled_repos
+                    self._git_last_updated_at[server.server_id] = now.isoformat()
                 else:
                     repos = previous_repos
 
@@ -232,12 +247,49 @@ class DashboardRuntime:
                     clash["last_updated_at"] = clash_updated_at
                     self._clash_cache[server.server_id] = clash
                     self._clash_last_updated_at[server.server_id] = clash_updated_at
+                    self._clash_last_poll_ok[server.server_id] = True
+                else:
+                    self._clash_last_poll_ok[server.server_id] = False
             self._last_status_poll[server.server_id] = now
+        elif should_poll_status and host_unreachable:
+            if "git" in enabled:
+                self._git_last_poll_ok[server.server_id] = False
+            if "clash" in enabled:
+                self._clash_last_poll_ok[server.server_id] = False
 
         if "git" not in enabled:
             repos = []
         if "clash" not in enabled:
             clash = DEFAULT_CLASH
+
+        metrics_threshold_seconds = max(1.0, metrics_interval_seconds * 2)
+        status_threshold_seconds = max(1.0, status_interval_seconds * 2)
+        freshness = {
+            "system": _build_freshness_entry(
+                now=now,
+                last_updated_at=self._system_last_updated_at.get(server.server_id),
+                last_poll_ok=self._system_last_poll_ok.get(server.server_id),
+                threshold_seconds=metrics_threshold_seconds,
+            ),
+            "gpu": _build_freshness_entry(
+                now=now,
+                last_updated_at=self._gpu_last_updated_at.get(server.server_id),
+                last_poll_ok=self._gpu_last_poll_ok.get(server.server_id),
+                threshold_seconds=metrics_threshold_seconds,
+            ),
+            "git": _build_freshness_entry(
+                now=now,
+                last_updated_at=self._git_last_updated_at.get(server.server_id),
+                last_poll_ok=self._git_last_poll_ok.get(server.server_id),
+                threshold_seconds=status_threshold_seconds,
+            ),
+            "clash": _build_freshness_entry(
+                now=now,
+                last_updated_at=self._clash_last_updated_at.get(server.server_id),
+                last_poll_ok=self._clash_last_poll_ok.get(server.server_id),
+                threshold_seconds=status_threshold_seconds,
+            ),
+        }
 
         payload = {
             "timestamp": snapshot.get("timestamp", now.isoformat()),
@@ -245,6 +297,7 @@ class DashboardRuntime:
             "repos": repos,
             "clash": clash,
             "enabled_panels": server.enabled_panels,
+            "freshness": freshness,
         }
         normalized = normalize_server_payload(
             server_id=server.server_id,
@@ -505,6 +558,48 @@ def _is_valid_branch_name(branch: str) -> bool:
     if ".." in branch or "@{" in branch:
         return False
     return True
+
+
+def _build_freshness_entry(
+    *,
+    now: datetime,
+    last_updated_at: str | None,
+    last_poll_ok: bool | None,
+    threshold_seconds: float,
+) -> dict[str, str | int | float | None]:
+    age_seconds = _age_seconds_from_iso(now=now, timestamp_iso=last_updated_at)
+    normalized_threshold = float(max(1.0, threshold_seconds))
+
+    if last_poll_ok is False:
+        state = "cached"
+        reason = "poll_error"
+    elif age_seconds is None:
+        state = "cached"
+        reason = "no_data"
+    elif age_seconds > normalized_threshold:
+        state = "cached"
+        reason = "age_expired"
+    else:
+        state = "live"
+        reason = "ok"
+
+    return {
+        "state": state,
+        "reason": reason,
+        "last_updated_at": last_updated_at,
+        "age_seconds": age_seconds if age_seconds is not None else 0,
+        "threshold_seconds": normalized_threshold,
+    }
+
+
+def _age_seconds_from_iso(*, now: datetime, timestamp_iso: str | None) -> int | None:
+    if not timestamp_iso:
+        return None
+    try:
+        parsed = datetime.fromisoformat(timestamp_iso)
+    except ValueError:
+        return None
+    return max(0, int((now - parsed).total_seconds()))
 
 
 def _clash_command() -> str:
