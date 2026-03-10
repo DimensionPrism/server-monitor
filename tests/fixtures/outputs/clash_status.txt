@@ -1,0 +1,4 @@
+running=true
+api_reachable=true
+ui_reachable=false
+message=healthy
