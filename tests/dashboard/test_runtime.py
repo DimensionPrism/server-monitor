@@ -754,3 +754,24 @@ async def test_runtime_marks_repo_freshness_mixed_live_and_cached():
     assert repos["/work/repo-ok"]["freshness"]["state"] == "live"
     assert repos["/work/repo-fail"]["freshness"]["state"] == "cached"
     assert repos["/work/repo-fail"]["freshness"]["reason"] == "poll_error"
+
+
+def test_extract_clash_secret_parses_chinese_label_output():
+    from server_monitor.dashboard.runtime import _extract_clash_secret
+
+    text = "😼 当前密钥：mysecret"
+    assert _extract_clash_secret(text) == "mysecret"
+
+
+def test_clash_command_includes_bearer_header_for_api_and_ui():
+    from server_monitor.dashboard.runtime import _clash_command
+
+    cmd = _clash_command(
+        api_probe_url="http://127.0.0.1:9090/version",
+        ui_probe_url="http://127.0.0.1:9090/ui",
+        secret="mysecret",
+    )
+    assert "Authorization: Bearer mysecret" in cmd
+    assert cmd.count("-H \"$AUTH_HEADER\"") >= 2
+    assert "127.0.0.1:9090/version" in cmd
+    assert "127.0.0.1:9090/ui" in cmd

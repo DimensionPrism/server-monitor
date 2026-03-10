@@ -619,10 +619,50 @@ def _age_seconds_from_iso(*, now: datetime, timestamp_iso: str | None) -> int | 
     return max(0, int((now - parsed).total_seconds()))
 
 
-def _clash_command() -> str:
+def _extract_clash_secret(output: str) -> str | None:
+    if not output:
+        return None
+    ansi_cleaned = re.sub(r"\x1b\[[0-9;]*m", "", output)
+    patterns = [
+        r"当前密钥\s*[:：]\s*(\S+)",
+        r"current\s+secret\s*[:：]\s*(\S+)",
+        r"secret\s*[:：]\s*(\S+)",
+    ]
+    for raw_line in ansi_cleaned.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        for pattern in patterns:
+            match = re.search(pattern, line, flags=re.IGNORECASE)
+            if match:
+                secret = match.group(1).strip().strip("'\"")
+                if secret:
+                    return secret
+    return None
+
+
+def _clash_command(
+    api_probe_url: str = "http://127.0.0.1:9090/version",
+    ui_probe_url: str = "http://127.0.0.1:9090/ui",
+    secret: str = "",
+) -> str:
+    auth_header = _shell_quote(f"Authorization: Bearer {secret}")
+    api_url = _shell_quote(api_probe_url)
+    ui_url = _shell_quote(ui_probe_url)
     return (
         "if pgrep -f clash >/dev/null; then echo running=true; else echo running=false; fi; "
+        f"AUTH_HEADER={auth_header}; "
+        f"API_URL={api_url}; "
+        f"UI_URL={ui_url}; "
+        "if command -v curl >/dev/null 2>&1; then "
+        "API_CODE=$(curl -sS -o /dev/null -w '%{http_code}' --connect-timeout 1 --max-time 2 -H \"$AUTH_HEADER\" \"$API_URL\" || echo 000); "
+        "UI_CODE=$(curl -sS -o /dev/null -w '%{http_code}' --connect-timeout 1 --max-time 2 -H \"$AUTH_HEADER\" \"$UI_URL\" || echo 000); "
+        "if [ \"$API_CODE\" -ge 200 ] && [ \"$API_CODE\" -lt 300 ]; then echo api_reachable=true; else echo api_reachable=false; fi; "
+        "if [ \"$UI_CODE\" -ge 200 ] && [ \"$UI_CODE\" -lt 300 ]; then echo ui_reachable=true; else echo ui_reachable=false; fi; "
+        "if [ \"$API_CODE\" -ge 200 ] && [ \"$API_CODE\" -lt 300 ] && [ \"$UI_CODE\" -ge 200 ] && [ \"$UI_CODE\" -lt 300 ]; then echo message=ok; else echo message=probe-error; fi; "
+        "else "
         "echo api_reachable=false; "
         "echo ui_reachable=false; "
-        "echo message=ok"
+        "echo message=curl-missing; "
+        "fi"
     )
