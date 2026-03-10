@@ -156,6 +156,23 @@ class _SystemPollErrorExecutor:
         return _Result("")
 
 
+class _MixedRepoFreshnessExecutor:
+    def __init__(self):
+        self.calls = []
+        self._repo_fail_calls = 0
+
+    async def run(self, alias: str, remote_command: str, timeout_seconds: float | None = None):
+        self.calls.append((alias, remote_command, timeout_seconds))
+        if "/work/repo-fail" in remote_command:
+            self._repo_fail_calls += 1
+            if self._repo_fail_calls >= 2:
+                return _Result("", stderr="temporary git status failure", exit_code=1, error="temporary git status failure")
+            return _Result("## main...origin/main\n M README.md\n")
+        if "/work/repo-ok" in remote_command:
+            return _Result("## main...origin/main\n M README.md\n")
+        return _Result("", stderr="unknown command", exit_code=1, error="unknown command")
+
+
 @pytest.mark.asyncio
 async def test_runtime_poll_once_broadcasts_agentless_update():
     from server_monitor.dashboard.runtime import DashboardRuntime
@@ -698,3 +715,42 @@ async def test_runtime_marks_system_freshness_cached_on_poll_error():
     payload = ws.messages[0]
     assert payload["freshness"]["system"]["state"] == "cached"
     assert payload["freshness"]["system"]["reason"] == "poll_error"
+
+
+@pytest.mark.asyncio
+async def test_runtime_marks_repo_freshness_mixed_live_and_cached():
+    from server_monitor.dashboard.runtime import DashboardRuntime
+    from server_monitor.dashboard.ws_hub import WebSocketHub
+
+    settings = DashboardSettings(
+        metrics_interval_seconds=1.0,
+        status_interval_seconds=0.0,
+        servers=[
+            ServerSettings(
+                server_id="server-fresh-repos",
+                ssh_alias="srv-fresh-repos",
+                working_dirs=["/work/repo-ok", "/work/repo-fail"],
+                enabled_panels=["git"],
+            )
+        ],
+    )
+
+    hub = WebSocketHub()
+    ws = _FakeWebSocket()
+    await hub.connect(ws)
+    executor = _MixedRepoFreshnessExecutor()
+
+    runtime = DashboardRuntime(
+        hub=hub,
+        settings_store=_FakeSettingsStore(settings),
+        executor=executor,
+    )
+
+    await runtime.poll_once()
+    await runtime.poll_once()
+
+    payload = ws.messages[1]
+    repos = {repo["path"]: repo for repo in payload["repos"]}
+    assert repos["/work/repo-ok"]["freshness"]["state"] == "live"
+    assert repos["/work/repo-fail"]["freshness"]["state"] == "cached"
+    assert repos["/work/repo-fail"]["freshness"]["reason"] == "poll_error"

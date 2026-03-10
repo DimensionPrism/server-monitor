@@ -229,9 +229,10 @@ class DashboardRuntime:
                     status_results[key] = result
 
             if "git" in status_results:
-                polled_repos, successful_polls = status_results["git"]
+                polled_repos, successful_polls, repo_poll_ok = status_results["git"]
                 total_repos = len(server.working_dirs)
                 self._git_last_poll_ok[server.server_id] = successful_polls == total_repos
+                self._repo_last_poll_ok[server.server_id] = repo_poll_ok
                 if successful_polls > 0 or len(previous_repos) == 0:
                     repos = polled_repos
                     self._repo_cache[server.server_id] = polled_repos
@@ -264,6 +265,20 @@ class DashboardRuntime:
 
         metrics_threshold_seconds = max(1.0, metrics_interval_seconds * 2)
         status_threshold_seconds = max(1.0, status_interval_seconds * 2)
+        repo_poll_ok = self._repo_last_poll_ok.get(server.server_id, {})
+        repos_with_freshness: list[dict] = []
+        for repo in repos:
+            normalized_repo = dict(repo)
+            repo_path = normalized_repo.get("path")
+            repo_last_poll_ok = repo_poll_ok.get(repo_path) if isinstance(repo_path, str) else None
+            normalized_repo["freshness"] = _build_freshness_entry(
+                now=now,
+                last_updated_at=normalized_repo.get("last_updated_at"),
+                last_poll_ok=repo_last_poll_ok,
+                threshold_seconds=status_threshold_seconds,
+            )
+            repos_with_freshness.append(normalized_repo)
+
         freshness = {
             "system": _build_freshness_entry(
                 now=now,
@@ -294,7 +309,7 @@ class DashboardRuntime:
         payload = {
             "timestamp": snapshot.get("timestamp", now.isoformat()),
             "snapshot": snapshot,
-            "repos": repos,
+            "repos": repos_with_freshness,
             "clash": clash,
             "enabled_panels": server.enabled_panels,
             "freshness": freshness,
@@ -313,7 +328,7 @@ class DashboardRuntime:
         *,
         previous_repos: list[dict],
         polled_at_iso: str,
-    ) -> tuple[list[dict], int]:
+    ) -> tuple[list[dict], int, dict[str, bool]]:
         previous_by_path = {
             repo.get("path"): repo
             for repo in previous_repos
@@ -331,17 +346,19 @@ class DashboardRuntime:
             for repo in server.working_dirs
         ]
         if not repo_tasks:
-            return [], 0
+            return [], 0, {}
 
         repos: list[dict] = []
         successful_polls = 0
+        repo_poll_ok: dict[str, bool] = {}
         results = await asyncio.gather(*repo_tasks)
-        for repo_result, success in results:
+        for repo_path, repo_result, success in results:
+            repo_poll_ok[repo_path] = success
             if repo_result is not None:
                 repos.append(repo_result)
             if success:
                 successful_polls += 1
-        return repos, successful_polls
+        return repos, successful_polls, repo_poll_ok
 
     async def _poll_single_git_repo(
         self,
@@ -350,18 +367,18 @@ class DashboardRuntime:
         repo_path: str,
         previous_repo: dict | None,
         polled_at_iso: str,
-    ) -> tuple[dict | None, bool]:
+    ) -> tuple[str, dict | None, bool]:
         command = _git_status_command(repo_path)
         result = await self.executor.run(server.ssh_alias, command)
         if result.exit_code != 0 or result.error:
-            return previous_repo, False
+            return repo_path, previous_repo, False
         repo = parse_repo_status(
             path=repo_path,
             porcelain_text=result.stdout,
             last_commit_age_seconds=0,
         )
         repo["last_updated_at"] = polled_at_iso
-        return (repo, True)
+        return (repo_path, repo, True)
 
     async def run_git_operation(
         self,
