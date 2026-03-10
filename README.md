@@ -29,7 +29,8 @@ uv sync
 3. Start agent (bind localhost only):
 
 ```bash
-uv run uvicorn server_monitor.agent.main:build_app_from_config --factory --host 127.0.0.1 --port 9000
+SERVER_MONITOR_AGENT_CONFIG=config/agent.example.toml \
+uv run uvicorn server_monitor.agent.main:build_app --factory --host 127.0.0.1 --port 9000
 ```
 
 ## Run local dashboard
