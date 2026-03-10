@@ -64,4 +64,4 @@ class ServerSnapshot(BaseModel):
     gpus: list[GpuMetrics] = []
     repos: list[RepoStatus] = []
     clash: ClashStatus
-
+    metadata: dict[str, str] = {}
