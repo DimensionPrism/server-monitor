@@ -19,7 +19,7 @@ def build_dashboard_app():
     hub = WebSocketHub()
     settings_store = _build_settings_store()
     runtime = _build_runtime(hub, settings_store)
-    return create_dashboard_app(ws_hub=hub, runtime=runtime)
+    return create_dashboard_app(ws_hub=hub, runtime=runtime, settings_store=settings_store)
 
 
 async def emit_dashboard_update(
