@@ -1,6 +1,8 @@
+from dataclasses import dataclass
+
 import pytest
-import httpx
-from datetime import UTC, datetime
+
+from server_monitor.dashboard.settings import DashboardSettings, ServerSettings
 
 
 class _FakeWebSocket:
@@ -11,30 +13,55 @@ class _FakeWebSocket:
         self.messages.append(payload)
 
 
+class _FakeSettingsStore:
+    def __init__(self, settings: DashboardSettings):
+        self._settings = settings
+
+    def load(self) -> DashboardSettings:
+        return self._settings
+
+
+@dataclass
+class _Result:
+    stdout: str
+    stderr: str = ""
+    exit_code: int = 0
+    error: str | None = None
+
+
+class _FakeExecutor:
+    def __init__(self):
+        self.calls = []
+
+    async def run(self, alias: str, remote_command: str):
+        self.calls.append((alias, remote_command))
+
+        if "nvidia-smi" in remote_command:
+            return _Result("0, NVIDIA A100, 70, 1024, 40960, 50")
+        if "git -C" in remote_command:
+            return _Result("## main...origin/main\n M README.md\n")
+        if "pgrep -f clash" in remote_command:
+            return _Result("running=true\napi_reachable=false\nui_reachable=false\nmessage=ok")
+        return _Result("CPU: 11.0\nMEM: 22.0\nDISK: 33.0\nRX_KBPS: 0\nTX_KBPS: 0")
+
+
 @pytest.mark.asyncio
-async def test_runtime_poll_once_broadcasts_agent_update():
-    from server_monitor.dashboard.runtime import DashboardRuntime, PollSource
+async def test_runtime_poll_once_broadcasts_agentless_update():
+    from server_monitor.dashboard.runtime import DashboardRuntime
     from server_monitor.dashboard.ws_hub import WebSocketHub
 
-    def _handler(request: httpx.Request) -> httpx.Response:
-        if request.url.path == "/snapshot":
-            return httpx.Response(
-                200,
-                json={
-                    "timestamp": datetime.now(UTC).isoformat(),
-                    "cpu_percent": 12.0,
-                    "memory_percent": 34.0,
-                    "disk_percent": 56.0,
-                    "network_rx_kbps": 1.2,
-                    "network_tx_kbps": 3.4,
-                    "gpus": [],
-                },
+    settings = DashboardSettings(
+        metrics_interval_seconds=3.0,
+        status_interval_seconds=10.0,
+        servers=[
+            ServerSettings(
+                server_id="server-a",
+                ssh_alias="srv-a",
+                working_dirs=["/work/repo-a"],
+                enabled_panels=["system", "gpu", "git", "clash"],
             )
-        if request.url.path == "/repos":
-            return httpx.Response(200, json=[{"path": "/work/repo"}])
-        if request.url.path == "/clash":
-            return httpx.Response(200, json={"running": True})
-        return httpx.Response(404)
+        ],
+    )
 
     hub = WebSocketHub()
     ws = _FakeWebSocket()
@@ -42,10 +69,8 @@ async def test_runtime_poll_once_broadcasts_agent_update():
 
     runtime = DashboardRuntime(
         hub=hub,
-        sources=[PollSource(server_id="server-a", base_url="http://agent-a")],
-        interval_seconds=3.0,
-        stale_after_seconds=10.0,
-        transport=httpx.MockTransport(_handler),
+        settings_store=_FakeSettingsStore(settings),
+        executor=_FakeExecutor(),
     )
 
     await runtime.poll_once()
@@ -53,6 +78,38 @@ async def test_runtime_poll_once_broadcasts_agent_update():
     assert len(ws.messages) == 1
     payload = ws.messages[0]
     assert payload["server_id"] == "server-a"
-    assert payload["snapshot"]["cpu_percent"] == 12.0
+    assert payload["snapshot"]["cpu_percent"] == 11.0
+    assert payload["snapshot"]["gpus"][0]["index"] == 0
     assert payload["clash"]["running"] is True
-    assert payload["stale"] is False
+    assert payload["enabled_panels"] == ["system", "gpu", "git", "clash"]
+
+
+@pytest.mark.asyncio
+async def test_runtime_respects_panel_toggles():
+    from server_monitor.dashboard.runtime import DashboardRuntime
+    from server_monitor.dashboard.ws_hub import WebSocketHub
+
+    settings = DashboardSettings(
+        metrics_interval_seconds=3.0,
+        status_interval_seconds=10.0,
+        servers=[
+            ServerSettings(
+                server_id="server-b",
+                ssh_alias="srv-b",
+                working_dirs=["/work/repo-b"],
+                enabled_panels=["system"],
+            )
+        ],
+    )
+
+    executor = _FakeExecutor()
+    runtime = DashboardRuntime(
+        hub=WebSocketHub(),
+        settings_store=_FakeSettingsStore(settings),
+        executor=executor,
+    )
+
+    await runtime.poll_once()
+
+    assert len(executor.calls) == 1
+    assert "nvidia-smi" not in executor.calls[0][1]
