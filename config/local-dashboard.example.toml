@@ -1,0 +1,20 @@
+metrics_interval_seconds = 3
+status_interval_seconds = 12
+
+[[servers]]
+server_id = "server-a"
+host = "your-server-a.example.com"
+user = "ubuntu"
+ssh_port = 22
+local_tunnel_port = 19001
+agent_port = 9000
+repo_paths = ["/work/project-a", "/work/project-b"]
+
+[[servers]]
+server_id = "server-b"
+host = "your-server-b.example.com"
+user = "ubuntu"
+ssh_port = 22
+local_tunnel_port = 19002
+agent_port = 9000
+repo_paths = ["/work/project-c", "/work/project-d"]
