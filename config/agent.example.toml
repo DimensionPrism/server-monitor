@@ -1,0 +1,4 @@
+server_id = "server-a"
+host = "127.0.0.1"
+port = 9000
+repo_paths = ["/work/project-a", "/work/project-b"]
