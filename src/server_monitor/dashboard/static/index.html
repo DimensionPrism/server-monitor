@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Server Monitor Dashboard</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <header class="page-header">
+      <h1>Cloud Server Monitor</h1>
+      <p>Read-only live status for both GPU servers</p>
+    </header>
+
+    <main class="grid">
+      <section class="panel">
+        <h2>Server A</h2>
+        <div id="server-a-metrics" class="metrics">
+          <div>CPU: --</div>
+          <div>MEM: --</div>
+          <div>DISK: --</div>
+          <div>NET RX/TX: -- / --</div>
+        </div>
+      </section>
+
+      <section class="panel">
+        <h2>Server B</h2>
+        <div id="server-b-metrics" class="metrics">
+          <div>CPU: --</div>
+          <div>MEM: --</div>
+          <div>DISK: --</div>
+          <div>NET RX/TX: -- / --</div>
+        </div>
+      </section>
+
+      <section class="panel">
+        <h2>GPU Status</h2>
+        <pre id="gpu-status">Waiting for updates...</pre>
+      </section>
+
+      <section class="panel">
+        <h2>Git Repositories</h2>
+        <pre id="repo-status">Waiting for updates...</pre>
+      </section>
+
+      <section class="panel">
+        <h2>Clash Status</h2>
+        <pre id="clash-status">Waiting for updates...</pre>
+      </section>
+
+      <section class="panel">
+        <h2>Quick Links</h2>
+        <ul>
+          <li>SSH Server A</li>
+          <li>SSH Server B</li>
+          <li>Clash UI access instructions</li>
+        </ul>
+      </section>
+    </main>
+
+    <script src="/static/app.js"></script>
+  </body>
+</html>
+
