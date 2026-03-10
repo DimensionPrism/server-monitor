@@ -23,6 +23,8 @@ class ServerSettings:
     ssh_alias: str
     working_dirs: list[str] = field(default_factory=list)
     enabled_panels: list[PanelName] = field(default_factory=lambda: ["system", "gpu", "git", "clash"])
+    clash_api_probe_url: str = "http://127.0.0.1:9090/version"
+    clash_ui_probe_url: str = "http://127.0.0.1:9090/ui"
 
 
 @dataclass(slots=True)
@@ -51,6 +53,8 @@ class DashboardSettingsStore:
                 ssh_alias=item["ssh_alias"],
                 working_dirs=list(item.get("working_dirs", [])),
                 enabled_panels=list(item.get("enabled_panels", ["system", "gpu", "git", "clash"])),
+                clash_api_probe_url=str(item.get("clash_api_probe_url", "http://127.0.0.1:9090/version")),
+                clash_ui_probe_url=str(item.get("clash_ui_probe_url", "http://127.0.0.1:9090/ui")),
             )
             for item in raw.get("servers", [])
         ]
@@ -70,6 +74,8 @@ class DashboardSettingsStore:
                     "ssh_alias": server.ssh_alias,
                     "working_dirs": server.working_dirs,
                     "enabled_panels": server.enabled_panels,
+                    "clash_api_probe_url": server.clash_api_probe_url,
+                    "clash_ui_probe_url": server.clash_ui_probe_url,
                 }
                 for server in settings.servers
             ],
