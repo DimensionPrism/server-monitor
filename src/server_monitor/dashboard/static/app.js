@@ -47,6 +47,13 @@ function renderLastUpdateLine(timestampText) {
   return `<div class="muted panel-updated">Last update: ${escapeHtml(formatLastUpdate(timestampText))}</div>`;
 }
 
+function renderFreshnessBadge(freshness) {
+  const state = freshness && freshness.state === "live" ? "live" : "cached";
+  const reason = freshness && freshness.reason ? freshness.reason : "no_data";
+  const label = state === "live" ? "LIVE" : "CACHED";
+  return `<span class="freshness-badge freshness-${state}" title="${escapeHtml(reason)}">${label}</span>`;
+}
+
 function clampPercent(value) {
   const number = Number(value);
   if (!Number.isFinite(number)) {
@@ -119,9 +126,10 @@ function renderPanelGroup(title, contentHtml, options = {}) {
   const groupName = String(options.groupClass || "unknown");
   const shouldOpen = readPanelOpenState(serverId, groupName, options.open === true);
   const openAttr = shouldOpen ? " open" : "";
+  const summaryBadgeHtml = options.summaryBadgeHtml || "";
   return `
     <details class="${groupClass}" data-panel-server-id="${escapeHtml(serverId)}" data-panel-group="${escapeHtml(groupName)}"${openAttr}>
-      <summary>${escapeHtml(title)}</summary>
+      <summary><span class="panel-summary">${escapeHtml(title)} ${summaryBadgeHtml}</span></summary>
       <div class="panel-group-body">${contentHtml}</div>
     </details>
   `;
@@ -213,7 +221,10 @@ function renderGitPanel(update) {
       const safePath = escapeHtml(repo.path);
       return `
         <div class="git-repo" data-server-id="${escapeHtml(update.server_id)}" data-repo-path="${safePath}">
-          <div class="git-repo-path">${safePath}</div>
+          <div class="git-repo-head">
+            <div class="git-repo-path">${safePath}</div>
+            ${renderFreshnessBadge(repo.freshness)}
+          </div>
           ${repoSummary(repo)}
           ${renderLastUpdateLine(repo.last_updated_at)}
           <div class="git-actions">
@@ -243,31 +254,50 @@ function renderMonitor() {
 
   for (const update of state.updates.values()) {
     const panels = new Set(update.enabled_panels || ["system", "gpu", "git", "clash"]);
+    const freshness = update.freshness || {};
     const snapshot = update.snapshot || {};
-    const stale = update.stale ? "yes" : "no";
 
     let html = `
       <article class="card server-card">
         <header class="server-card-head">
           <h3>${escapeHtml(update.server_id)}</h3>
-          <div class="muted">stale: ${stale}</div>
         </header>
     `;
 
     if (panels.has("system")) {
-      html += renderPanelGroup("System", renderSystemPanel(snapshot), { groupClass: "system", open: true, serverId: update.server_id });
+      html += renderPanelGroup("System", renderSystemPanel(snapshot), {
+        groupClass: "system",
+        open: true,
+        serverId: update.server_id,
+        summaryBadgeHtml: renderFreshnessBadge(freshness.system),
+      });
     }
 
     if (panels.has("gpu")) {
-      html += renderPanelGroup("GPU", renderGpuPanel(snapshot), { groupClass: "gpu", open: true, serverId: update.server_id });
+      html += renderPanelGroup("GPU", renderGpuPanel(snapshot), {
+        groupClass: "gpu",
+        open: true,
+        serverId: update.server_id,
+        summaryBadgeHtml: renderFreshnessBadge(freshness.gpu),
+      });
     }
 
     if (panels.has("git")) {
-      html += renderPanelGroup("Git", renderGitPanel(update), { groupClass: "git", open: false, serverId: update.server_id });
+      html += renderPanelGroup("Git", renderGitPanel(update), {
+        groupClass: "git",
+        open: false,
+        serverId: update.server_id,
+        summaryBadgeHtml: renderFreshnessBadge(freshness.git),
+      });
     }
 
     if (panels.has("clash")) {
-      html += renderPanelGroup("Clash", renderClashPanel(update.clash || {}), { groupClass: "clash", open: false, serverId: update.server_id });
+      html += renderPanelGroup("Clash", renderClashPanel(update.clash || {}), {
+        groupClass: "clash",
+        open: false,
+        serverId: update.server_id,
+        summaryBadgeHtml: renderFreshnessBadge(freshness.clash),
+      });
     }
 
     html += "</article>";

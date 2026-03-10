@@ -136,6 +136,12 @@ main {
   border-bottom: 1px solid transparent;
 }
 
+.panel-summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+
 .panel-group summary::-webkit-details-marker {
   display: none;
 }
@@ -250,8 +256,15 @@ main {
 .git-repo-path {
   font-size: 0.78rem;
   color: #bbd2ef;
-  margin-bottom: 0.35rem;
   word-break: break-all;
+}
+
+.git-repo-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 0.4rem;
+  margin-bottom: 0.35rem;
 }
 
 .repo-summary {
@@ -281,6 +294,28 @@ main {
   border-color: #20653f;
   color: #8ff0b1;
   background: #0a2415;
+}
+
+.freshness-badge {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid #2d4564;
+  border-radius: 999px;
+  padding: 0.1rem 0.4rem;
+  font-size: 0.68rem;
+  letter-spacing: 0.04em;
+}
+
+.freshness-live {
+  border-color: #20653f;
+  color: #8ff0b1;
+  background: #0a2415;
+}
+
+.freshness-cached {
+  border-color: #7a5c1c;
+  color: #f9cd74;
+  background: #291e08;
 }
 
 .git-actions {
