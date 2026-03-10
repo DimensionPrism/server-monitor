@@ -190,6 +190,10 @@ function renderClashPanel(clash) {
     <div class="kv"><span>API</span><strong>${clash && clash.api_reachable ? "reachable" : "unreachable"}</strong></div>
     <div class="kv"><span>UI</span><strong>${clash && clash.ui_reachable ? "reachable" : "unreachable"}</strong></div>
     <div class="kv"><span>Message</span><strong>${escapeHtml(message)}</strong></div>
+    <div class="clash-actions">
+      <button class="btn-pill" type="button" data-clash-open-ui>Open UI Tunnel</button>
+      <span class="muted" data-clash-status></span>
+    </div>
     ${renderLastUpdateLine(clash && clash.last_updated_at)}
   `;
 }
@@ -261,7 +265,7 @@ function renderMonitor() {
     const snapshot = update.snapshot || {};
 
     let html = `
-      <article class="card server-card">
+      <article class="card server-card" data-server-id="${escapeHtml(update.server_id)}">
         <header class="server-card-head">
           <h3>${escapeHtml(update.server_id)}</h3>
         </header>
@@ -310,6 +314,7 @@ function renderMonitor() {
   grid.innerHTML = `<div class="server-board">${cards.join("\n")}</div>`;
   bindPanelGroupEvents();
   bindGitControlEvents();
+  bindClashControlEvents();
 }
 
 async function api(method, url, body) {
@@ -378,6 +383,25 @@ async function runGitOperation(serverId, repoPath, operation, branch) {
   renderMonitor();
 }
 
+async function openClashUiTunnel(serverId, statusEl) {
+  if (statusEl) {
+    statusEl.textContent = "Opening...";
+  }
+  try {
+    const response = await api("POST", `/api/servers/${encodeURIComponent(serverId)}/clash/tunnel/open`);
+    if (statusEl) {
+      statusEl.textContent = response && response.reused ? "Tunnel reused" : "Tunnel opened";
+    }
+    if (response && response.url) {
+      window.open(response.url, "_blank", "noopener");
+    }
+  } catch (err) {
+    if (statusEl) {
+      statusEl.textContent = `Open failed: ${err.message}`;
+    }
+  }
+}
+
 function bindGitControlEvents() {
   const buttons = document.querySelectorAll("button[data-git-op]");
   buttons.forEach((button) => {
@@ -399,6 +423,28 @@ function bindGitControlEvents() {
         return;
       }
       await runGitOperation(serverId, repoPath, operation, branch);
+    });
+  });
+}
+
+function bindClashControlEvents() {
+  const buttons = document.querySelectorAll("button[data-clash-open-ui]");
+  buttons.forEach((button) => {
+    if (button.dataset.bound === "1") {
+      return;
+    }
+    button.dataset.bound = "1";
+    button.addEventListener("click", async () => {
+      const card = button.closest(".server-card");
+      const serverId = card ? card.getAttribute("data-server-id") : "";
+      const statusEl = button.parentElement ? button.parentElement.querySelector("[data-clash-status]") : null;
+      if (!serverId) {
+        if (statusEl) {
+          statusEl.textContent = "Open failed: missing server id";
+        }
+        return;
+      }
+      await openClashUiTunnel(serverId, statusEl);
     });
   });
 }

@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 
 from server_monitor.dashboard.api import create_dashboard_app
+from server_monitor.dashboard.clash_tunnel import ClashTunnelManager
 from server_monitor.dashboard.normalize import normalize_server_payload
 from server_monitor.dashboard.runtime import DashboardRuntime, SshCommandExecutor
 from server_monitor.dashboard.settings import DashboardSettings, DashboardSettingsStore, ServerSettings
@@ -19,7 +20,13 @@ def build_dashboard_app():
     hub = WebSocketHub()
     settings_store = _build_settings_store()
     runtime = _build_runtime(hub, settings_store)
-    return create_dashboard_app(ws_hub=hub, runtime=runtime, settings_store=settings_store)
+    clash_tunnel_manager = ClashTunnelManager()
+    return create_dashboard_app(
+        ws_hub=hub,
+        runtime=runtime,
+        settings_store=settings_store,
+        clash_tunnel_manager=clash_tunnel_manager,
+    )
 
 
 async def emit_dashboard_update(

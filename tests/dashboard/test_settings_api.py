@@ -39,13 +39,42 @@ class _FakeGitRuntime:
         }
 
 
-def _make_client(tmp_path, runtime=None):
+class _FakeClashTunnelManager:
+    def __init__(self):
+        self.calls = []
+        self.fail_mode = None
+
+    async def open_ui_tunnel(self, *, server_id: str, ssh_alias: str, clash_ui_probe_url: str):
+        self.calls.append(
+            {
+                "server_id": server_id,
+                "ssh_alias": ssh_alias,
+                "clash_ui_probe_url": clash_ui_probe_url,
+            }
+        )
+        if self.fail_mode == "bad_request":
+            raise ValueError("invalid clash ui url")
+        if self.fail_mode == "open_failed":
+            raise RuntimeError("ssh forward failed")
+        return {
+            "url": "http://127.0.0.1:19100/ui",
+            "local_port": 19100,
+            "reused": False,
+        }
+
+
+def _make_client(tmp_path, runtime=None, tunnel_manager=None):
     from server_monitor.dashboard.api import create_dashboard_app
     from server_monitor.dashboard.settings import DashboardSettingsStore
     from server_monitor.dashboard.ws_hub import WebSocketHub
 
     store = DashboardSettingsStore(tmp_path / "servers.toml")
-    app = create_dashboard_app(ws_hub=WebSocketHub(), settings_store=store, runtime=runtime)
+    app = create_dashboard_app(
+        ws_hub=WebSocketHub(),
+        settings_store=store,
+        runtime=runtime,
+        clash_tunnel_manager=tunnel_manager,
+    )
     return TestClient(app)
 
 
@@ -197,3 +226,79 @@ def test_settings_api_git_ops_rejects_unknown_operation(tmp_path):
     )
     assert response.status_code == 400
     assert runtime.calls == []
+
+
+def test_settings_api_clash_tunnel_open_dispatches_to_manager(tmp_path):
+    tunnel_manager = _FakeClashTunnelManager()
+    client = _make_client(tmp_path, tunnel_manager=tunnel_manager)
+
+    client.post(
+        "/api/servers",
+        json={
+            "server_id": "srv-clash",
+            "ssh_alias": "server-clash",
+            "working_dirs": [],
+            "enabled_panels": ["clash"],
+            "clash_ui_probe_url": "http://127.0.0.1:9095/ui",
+        },
+    )
+
+    response = client.post("/api/servers/srv-clash/clash/tunnel/open")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["url"] == "http://127.0.0.1:19100/ui"
+    assert body["local_port"] == 19100
+    assert body["reused"] is False
+    assert tunnel_manager.calls[0]["server_id"] == "srv-clash"
+    assert tunnel_manager.calls[0]["ssh_alias"] == "server-clash"
+    assert tunnel_manager.calls[0]["clash_ui_probe_url"] == "http://127.0.0.1:9095/ui"
+
+
+def test_settings_api_clash_tunnel_open_requires_manager(tmp_path):
+    client = _make_client(tmp_path)
+
+    response = client.post("/api/servers/srv-clash/clash/tunnel/open")
+
+    assert response.status_code == 503
+
+
+def test_settings_api_clash_tunnel_open_maps_manager_validation_error(tmp_path):
+    tunnel_manager = _FakeClashTunnelManager()
+    tunnel_manager.fail_mode = "bad_request"
+    client = _make_client(tmp_path, tunnel_manager=tunnel_manager)
+
+    client.post(
+        "/api/servers",
+        json={
+            "server_id": "srv-clash-invalid",
+            "ssh_alias": "server-clash-invalid",
+            "working_dirs": [],
+            "enabled_panels": ["clash"],
+            "clash_ui_probe_url": "not-a-url",
+        },
+    )
+
+    response = client.post("/api/servers/srv-clash-invalid/clash/tunnel/open")
+
+    assert response.status_code == 400
+
+
+def test_settings_api_clash_tunnel_open_maps_manager_runtime_error(tmp_path):
+    tunnel_manager = _FakeClashTunnelManager()
+    tunnel_manager.fail_mode = "open_failed"
+    client = _make_client(tmp_path, tunnel_manager=tunnel_manager)
+
+    client.post(
+        "/api/servers",
+        json={
+            "server_id": "srv-clash-fail",
+            "ssh_alias": "server-clash-fail",
+            "working_dirs": [],
+            "enabled_panels": ["clash"],
+        },
+    )
+
+    response = client.post("/api/servers/srv-clash-fail/clash/tunnel/open")
+
+    assert response.status_code == 502

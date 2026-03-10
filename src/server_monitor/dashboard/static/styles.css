@@ -325,6 +325,14 @@ main {
   align-items: center;
 }
 
+.clash-actions {
+  margin-top: 0.4rem;
+  display: flex;
+  gap: 0.45rem;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
 .btn-pill {
   border: 1px solid #2d4b74;
   border-radius: 999px;

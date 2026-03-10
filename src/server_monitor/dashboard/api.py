@@ -14,7 +14,7 @@ from server_monitor.dashboard.settings import DashboardSettings, DashboardSettin
 from server_monitor.dashboard.ws_hub import WebSocketHub
 
 
-def _build_lifespan(runtime):
+def _build_lifespan(runtime, clash_tunnel_manager):
     @asynccontextmanager
     async def _lifespan(_app: FastAPI):
         if runtime is not None:
@@ -24,6 +24,8 @@ def _build_lifespan(runtime):
         finally:
             if runtime is not None:
                 await runtime.stop()
+            if clash_tunnel_manager is not None:
+                await clash_tunnel_manager.close_all()
 
     return _lifespan
 
@@ -91,10 +93,22 @@ def _require_git_runtime(runtime):
     return runtime
 
 
-def create_dashboard_app(*, ws_hub: WebSocketHub, runtime=None, settings_store: DashboardSettingsStore | None = None) -> FastAPI:
+def _require_clash_tunnel_manager(clash_tunnel_manager):
+    if clash_tunnel_manager is None or not hasattr(clash_tunnel_manager, "open_ui_tunnel"):
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="clash tunnel unavailable")
+    return clash_tunnel_manager
+
+
+def create_dashboard_app(
+    *,
+    ws_hub: WebSocketHub,
+    runtime=None,
+    settings_store: DashboardSettingsStore | None = None,
+    clash_tunnel_manager=None,
+) -> FastAPI:
     """Create FastAPI app exposing health and websocket routes."""
 
-    app = FastAPI(title="Server Monitor Dashboard", lifespan=_build_lifespan(runtime))
+    app = FastAPI(title="Server Monitor Dashboard", lifespan=_build_lifespan(runtime, clash_tunnel_manager))
     static_dir = Path(__file__).with_name("static")
     app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
@@ -199,6 +213,23 @@ def create_dashboard_app(*, ws_hub: WebSocketHub, runtime=None, settings_store: 
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
         except ValueError as exc:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+    @app.post("/api/servers/{server_id}/clash/tunnel/open")
+    async def open_clash_tunnel(server_id: str) -> dict:
+        store = _require_store(settings_store)
+        clash_manager = _require_clash_tunnel_manager(clash_tunnel_manager)
+        settings = store.load()
+        server = _find_server(settings, server_id)
+        try:
+            return await clash_manager.open_ui_tunnel(
+                server_id=server.server_id,
+                ssh_alias=server.ssh_alias,
+                clash_ui_probe_url=server.clash_ui_probe_url,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        except RuntimeError as exc:
+            raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
 
     @app.get("/")
     def index() -> FileResponse:

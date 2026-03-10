@@ -189,3 +189,17 @@ def test_app_js_wires_clash_probe_url_settings_fields():
     assert response.status_code == 200
     assert "clash_api_probe_url" in response.text
     assert "clash_ui_probe_url" in response.text
+
+
+def test_app_js_wires_clash_ui_tunnel_open_action():
+    from server_monitor.dashboard.api import create_dashboard_app
+    from server_monitor.dashboard.ws_hub import WebSocketHub
+
+    app = create_dashboard_app(ws_hub=WebSocketHub())
+    client = TestClient(app)
+
+    response = client.get("/static/app.js")
+
+    assert response.status_code == 200
+    assert "data-clash-open-ui" in response.text
+    assert "/clash/tunnel/open" in response.text

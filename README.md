@@ -8,6 +8,7 @@ Local dashboard for monitoring remote GPU servers over SSH aliases in a single b
 - System/GPU/Git/Clash snapshot polling over SSH
 - Freshness badges (`LIVE`/`CACHED`) for System/GPU/Git/Clash panels and repo rows
 - Secret-aware Clash API/UI reachability checks with configurable probe URLs
+- One-click Clash UI tunnel-open action from the Clash panel
 - Live WebSocket updates in dashboard
 - Git safe operations from dashboard Git panel:
   - `refresh`
@@ -79,7 +80,7 @@ Notes:
 - You can also manage most settings directly from the browser Settings tab.
 - Git operations are restricted to repo paths declared in each server's `working_dirs`.
 - No destructive git commands are exposed in the UI/API.
-- The planned one-click Clash UI tunnel-open flow is not implemented yet.
+- Clash panel can open/reuse a local SSH forward and launch the remote Clash UI in a browser tab.
 - Status polling now runs on a non-blocking background path so stalled SSH status commands no longer block dashboard cycles or overwrite the last good Clash snapshot on transient secret command failures.
 
 ## Testing

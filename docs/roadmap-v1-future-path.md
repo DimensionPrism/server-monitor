@@ -2,20 +2,19 @@
 
 ## v1.1 Status
 
-`v1.1` is only partially implemented in the current codebase.
+`v1.1` is implemented in the current codebase.
 
 - Landed: freshness badges (`LIVE`/`CACHED`) for dashboard panels and repo rows.
 - Landed: real secret-aware Clash API/UI reachability checks with configurable probe URLs.
 - Landed: non-blocking status poll path so SSH status stalls no longer block refresh cycles or overwrite last-known Clash state on transient secret-command failures.
-- Remaining: one-click Clash UI tunnel-open flow from the dashboard.
+- Landed: one-click Clash UI tunnel-open flow from the dashboard (agentless SSH local forward).
 
 ## Short-Term TODO (1-3 weeks)
 
-1. Add one-click Clash UI tunnel open flow from dashboard (agentless SSH local forward).
-2. Add command latency and error-rate telemetry in UI (per server command health strip).
-3. Improve retry and timeout strategy per command type (GPU/System/Git/Clash) with bounded backoff.
-4. Add lightweight notification hooks for failures (desktop toast + optional webhook).
-5. Add exportable diagnostics bundle (current settings + last N poll errors + timings).
+1. Add command latency and error-rate telemetry in UI (per server command health strip).
+2. Improve retry and timeout strategy per command type (GPU/System/Git/Clash) with bounded backoff.
+3. Add lightweight notification hooks for failures (desktop toast + optional webhook).
+4. Add exportable diagnostics bundle (current settings + last N poll errors + timings).
 
 ## Long-Term Roadmap (1-3 months)
 
@@ -29,7 +28,7 @@
 
 ## Release Sequencing
 
-1. `v1.1`: Finish tunnel open and package the already-landed freshness UX + Clash real checks into a complete release.
+1. `v1.1`: Freshness UX + secret-aware Clash reachability + one-click tunnel open.
 2. `v1.2`: Reliability and diagnostics (timeouts/retries/health/notifications).
 3. `v1.3`: Historical data + policy controls.
 4. `v2.0`: Multi-user and plugin-oriented architecture.
