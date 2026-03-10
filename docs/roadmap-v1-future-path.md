@@ -6,17 +6,16 @@
 
 - Landed: freshness badges (`LIVE`/`CACHED`) for dashboard panels and repo rows.
 - Landed: real secret-aware Clash API/UI reachability checks with configurable probe URLs.
+- Landed: non-blocking status poll path so SSH status stalls no longer block refresh cycles or overwrite last-known Clash state on transient secret-command failures.
 - Remaining: one-click Clash UI tunnel-open flow from the dashboard.
-- Known limitation: intermittent long SSH status cycles can still take roughly 24-32 seconds and temporarily surface `CACHED` freshness or `secret-unavailable`, even though normal cycles with the new probe URLs return `api_reachable=true`, `ui_reachable=true`, and `message=ok`.
 
 ## Short-Term TODO (1-3 weeks)
 
 1. Add one-click Clash UI tunnel open flow from dashboard (agentless SSH local forward).
-2. Implement a non-blocking status poll path so SSH stalls stop degrading panel freshness and Clash reachability state.
-3. Add command latency and error-rate telemetry in UI (per server command health strip).
-4. Improve retry and timeout strategy per command type (GPU/System/Git/Clash) with bounded backoff.
-5. Add lightweight notification hooks for failures (desktop toast + optional webhook).
-6. Add exportable diagnostics bundle (current settings + last N poll errors + timings).
+2. Add command latency and error-rate telemetry in UI (per server command health strip).
+3. Improve retry and timeout strategy per command type (GPU/System/Git/Clash) with bounded backoff.
+4. Add lightweight notification hooks for failures (desktop toast + optional webhook).
+5. Add exportable diagnostics bundle (current settings + last N poll errors + timings).
 
 ## Long-Term Roadmap (1-3 months)
 

@@ -205,6 +205,40 @@ class _MissingSecretClashExecutor:
         return _Result("")
 
 
+class _StallingStatusExecutor:
+    def __init__(self, delay_seconds: float = 0.3):
+        self.calls = []
+        self.delay_seconds = delay_seconds
+
+    async def run(self, alias: str, remote_command: str, timeout_seconds: float | None = None):
+        self.calls.append((alias, remote_command, timeout_seconds))
+        if "clashsecret" in remote_command:
+            await asyncio.sleep(self.delay_seconds)
+            return _Result("😼 当前密钥：mysecret")
+        if "pgrep -f clash" in remote_command:
+            return _Result("running=true\napi_reachable=true\nui_reachable=true\nmessage=ok")
+        if "CPU=$(top -bn1" in remote_command:
+            return _Result("CPU: 11.0\nMEM: 22.0\nDISK: 33.0\nRX_KBPS: 0\nTX_KBPS: 0")
+        return _Result("")
+
+
+class _SecretTimeoutAfterSuccessExecutor:
+    def __init__(self):
+        self.calls = []
+        self._secret_calls = 0
+
+    async def run(self, alias: str, remote_command: str, timeout_seconds: float | None = None):
+        self.calls.append((alias, remote_command, timeout_seconds))
+        if "clashsecret" in remote_command:
+            self._secret_calls += 1
+            if self._secret_calls == 1:
+                return _Result("😼 当前密钥：mysecret")
+            return _Result("", stderr="timeout", exit_code=-1, error="timeout")
+        if "pgrep -f clash" in remote_command:
+            return _Result("running=true\napi_reachable=true\nui_reachable=true\nmessage=ok")
+        return _Result("")
+
+
 @pytest.mark.asyncio
 async def test_runtime_poll_once_broadcasts_agentless_update():
     from server_monitor.dashboard.runtime import DashboardRuntime
@@ -877,3 +911,76 @@ async def test_runtime_clash_probe_sets_unreachable_when_secret_unavailable():
     assert payload["clash"]["api_reachable"] is False
     assert payload["clash"]["ui_reachable"] is False
     assert payload["clash"]["message"] == "secret-unavailable"
+
+
+@pytest.mark.asyncio
+async def test_runtime_status_stall_does_not_block_poll_once():
+    from server_monitor.dashboard.runtime import DashboardRuntime
+    from server_monitor.dashboard.ws_hub import WebSocketHub
+
+    settings = DashboardSettings(
+        metrics_interval_seconds=1.0,
+        status_interval_seconds=0.0,
+        servers=[
+            ServerSettings(
+                server_id="server-status-stall",
+                ssh_alias="srv-status-stall",
+                working_dirs=[],
+                enabled_panels=["system", "clash"],
+            )
+        ],
+    )
+
+    runtime = DashboardRuntime(
+        hub=WebSocketHub(),
+        settings_store=_FakeSettingsStore(settings),
+        executor=_StallingStatusExecutor(delay_seconds=0.3),
+    )
+
+    start = time.monotonic()
+    await runtime.poll_once()
+    elapsed = time.monotonic() - start
+
+    assert elapsed < 0.2
+    await runtime.stop()
+
+
+@pytest.mark.asyncio
+async def test_runtime_keeps_cached_clash_when_secret_command_times_out():
+    from server_monitor.dashboard.runtime import DashboardRuntime
+    from server_monitor.dashboard.ws_hub import WebSocketHub
+
+    settings = DashboardSettings(
+        metrics_interval_seconds=1.0,
+        status_interval_seconds=0.0,
+        servers=[
+            ServerSettings(
+                server_id="server-clash-secret-timeout",
+                ssh_alias="srv-clash-secret-timeout",
+                working_dirs=[],
+                enabled_panels=["clash"],
+            )
+        ],
+    )
+
+    hub = WebSocketHub()
+    ws = _FakeWebSocket()
+    await hub.connect(ws)
+    runtime = DashboardRuntime(
+        hub=hub,
+        settings_store=_FakeSettingsStore(settings),
+        executor=_SecretTimeoutAfterSuccessExecutor(),
+    )
+
+    await runtime.poll_once()
+    assert ws.messages[0]["clash"]["message"] == "ok"
+
+    await runtime.poll_once()
+    await asyncio.sleep(0.01)
+    await runtime.poll_once()
+
+    latest = ws.messages[-1]["clash"]
+    assert latest["api_reachable"] is True
+    assert latest["ui_reachable"] is True
+    assert latest["message"] == "ok"
+    await runtime.stop()

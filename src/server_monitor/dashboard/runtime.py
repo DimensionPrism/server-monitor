@@ -24,6 +24,8 @@ DEFAULT_CLASH = {
     "message": "not-collected",
 }
 GIT_OPERATION_TIMEOUT_SECONDS = 20.0
+STATUS_COMMAND_TIMEOUT_SECONDS = 3.0
+STATUS_POLL_INLINE_BUDGET_SECONDS = 0.05
 
 
 class SshCommandExecutor:
@@ -70,6 +72,7 @@ class DashboardRuntime:
         self._git_last_poll_ok: dict[str, bool] = {}
         self._clash_last_poll_ok: dict[str, bool] = {}
         self._repo_last_poll_ok: dict[str, dict[str, bool]] = {}
+        self._status_poll_tasks: dict[str, asyncio.Task] = {}
 
     async def start(self) -> None:
         if self._task is not None:
@@ -78,13 +81,19 @@ class DashboardRuntime:
         self._task = asyncio.create_task(self._run_loop(), name="dashboard-runtime-loop")
 
     async def stop(self) -> None:
-        if self._task is None:
-            return
         self._stop_event.set()
-        self._task.cancel()
-        with suppress(asyncio.CancelledError):
-            await self._task
-        self._task = None
+        if self._task is not None:
+            self._task.cancel()
+            with suppress(asyncio.CancelledError):
+                await self._task
+            self._task = None
+        status_tasks = list(self._status_poll_tasks.values())
+        for task in status_tasks:
+            task.cancel()
+        for task in status_tasks:
+            with suppress(asyncio.CancelledError):
+                await task
+        self._status_poll_tasks.clear()
 
     async def poll_once(self) -> None:
         settings = self.settings_store.load()
@@ -199,86 +208,30 @@ class DashboardRuntime:
                     snapshot["metadata"]["ssh_error"] = error_text
                     host_unreachable = True
 
-        repos = self._repo_cache.get(server.server_id, [])
-        clash = dict(self._clash_cache.get(server.server_id, DEFAULT_CLASH))
-        if server.server_id in self._clash_last_updated_at:
-            clash["last_updated_at"] = self._clash_last_updated_at[server.server_id]
-
         should_poll_status = _needs_status_poll(
             last=self._last_status_poll.get(server.server_id),
             now=now,
             interval_seconds=status_interval_seconds,
         )
 
+        self._consume_finished_status_poll_task(server.server_id)
+
         if should_poll_status and ("git" in enabled or "clash" in enabled) and not host_unreachable:
-            previous_repos = [
-                repo for repo in self._repo_cache.get(server.server_id, []) if repo.get("path") in set(server.working_dirs)
-            ]
-            status_tasks: dict[str, asyncio.Task] = {}
-            if "git" in enabled:
-                status_tasks["git"] = asyncio.create_task(
-                    self._poll_git_repos(server, previous_repos=previous_repos, polled_at_iso=now.isoformat())
-                )
-            if "clash" in enabled:
-                secret_result = await self.executor.run(server.ssh_alias, _clash_secret_command())
-                secret_text = secret_result.stdout if secret_result.exit_code == 0 and not secret_result.error else ""
-                secret = _extract_clash_secret(secret_text)
-                if secret:
-                    status_tasks["clash"] = asyncio.create_task(
-                        self.executor.run(
-                            server.ssh_alias,
-                            _clash_command(
-                                api_probe_url=server.clash_api_probe_url,
-                                ui_probe_url=server.clash_ui_probe_url,
-                                secret=secret,
-                            ),
-                        )
-                    )
-                else:
-                    clash_updated_at = now.isoformat()
-                    clash["api_reachable"] = False
-                    clash["ui_reachable"] = False
-                    clash["message"] = "secret-unavailable"
-                    clash["last_updated_at"] = clash_updated_at
-                    self._clash_cache[server.server_id] = clash
-                    self._clash_last_updated_at[server.server_id] = clash_updated_at
-                    self._clash_last_poll_ok[server.server_id] = False
-
-            status_results: dict[str, object] = {}
-            if status_tasks:
-                gathered = await asyncio.gather(*status_tasks.values())
-                for key, result in zip(status_tasks.keys(), gathered):
-                    status_results[key] = result
-
-            if "git" in status_results:
-                polled_repos, successful_polls, repo_poll_ok = status_results["git"]
-                total_repos = len(server.working_dirs)
-                self._git_last_poll_ok[server.server_id] = successful_polls == total_repos
-                self._repo_last_poll_ok[server.server_id] = repo_poll_ok
-                if successful_polls > 0 or len(previous_repos) == 0:
-                    repos = polled_repos
-                    self._repo_cache[server.server_id] = polled_repos
-                    self._git_last_updated_at[server.server_id] = now.isoformat()
-                else:
-                    repos = previous_repos
-
-            if "clash" in status_results:
-                clash_result = status_results["clash"]
-                if clash_result.exit_code == 0 and not clash_result.error:
-                    clash = parse_clash_status(clash_result.stdout)
-                    clash_updated_at = now.isoformat()
-                    clash["last_updated_at"] = clash_updated_at
-                    self._clash_cache[server.server_id] = clash
-                    self._clash_last_updated_at[server.server_id] = clash_updated_at
-                    self._clash_last_poll_ok[server.server_id] = True
-                else:
-                    self._clash_last_poll_ok[server.server_id] = False
-            self._last_status_poll[server.server_id] = now
+            await self._start_status_poll_if_needed(server=server, now=now)
         elif should_poll_status and host_unreachable:
             if "git" in enabled:
                 self._git_last_poll_ok[server.server_id] = False
             if "clash" in enabled:
                 self._clash_last_poll_ok[server.server_id] = False
+
+        repos = [
+            repo
+            for repo in self._repo_cache.get(server.server_id, [])
+            if isinstance(repo, dict) and repo.get("path") in set(server.working_dirs)
+        ]
+        clash = dict(self._clash_cache.get(server.server_id, DEFAULT_CLASH))
+        if server.server_id in self._clash_last_updated_at:
+            clash["last_updated_at"] = self._clash_last_updated_at[server.server_id]
 
         if "git" not in enabled:
             repos = []
@@ -319,12 +272,14 @@ class DashboardRuntime:
                 last_updated_at=self._git_last_updated_at.get(server.server_id),
                 last_poll_ok=self._git_last_poll_ok.get(server.server_id),
                 threshold_seconds=status_threshold_seconds,
+                keep_live_while_inflight=self._is_status_poll_inflight(server.server_id),
             ),
             "clash": _build_freshness_entry(
                 now=now,
                 last_updated_at=self._clash_last_updated_at.get(server.server_id),
                 last_poll_ok=self._clash_last_poll_ok.get(server.server_id),
                 threshold_seconds=status_threshold_seconds,
+                keep_live_while_inflight=self._is_status_poll_inflight(server.server_id),
             ),
         }
 
@@ -343,6 +298,127 @@ class DashboardRuntime:
             stale_after_seconds=self.stale_after_seconds,
         )
         await self.hub.broadcast(normalized)
+
+    def _is_status_poll_inflight(self, server_id: str) -> bool:
+        task = self._status_poll_tasks.get(server_id)
+        return task is not None and not task.done()
+
+    def _consume_finished_status_poll_task(self, server_id: str) -> None:
+        task = self._status_poll_tasks.get(server_id)
+        if task is None or not task.done():
+            return
+        self._consume_status_poll_task_result(server_id, task)
+
+    def _consume_status_poll_task_result(self, server_id: str, task: asyncio.Task) -> None:
+        current = self._status_poll_tasks.get(server_id)
+        if current is task:
+            self._status_poll_tasks.pop(server_id, None)
+        with suppress(asyncio.CancelledError):
+            try:
+                task.result()
+            except Exception:
+                self._git_last_poll_ok[server_id] = False
+                self._clash_last_poll_ok[server_id] = False
+
+    async def _start_status_poll_if_needed(self, *, server: ServerSettings, now: datetime) -> None:
+        existing = self._status_poll_tasks.get(server.server_id)
+        if existing is not None:
+            if existing.done():
+                self._consume_status_poll_task_result(server.server_id, existing)
+            else:
+                return
+
+        poll_task = asyncio.create_task(
+            self._poll_status_panels(server=server, polled_at_iso=now.isoformat()),
+            name=f"dashboard-status-poll-{server.server_id}",
+        )
+        self._status_poll_tasks[server.server_id] = poll_task
+        self._last_status_poll[server.server_id] = now
+
+        try:
+            await asyncio.wait_for(asyncio.shield(poll_task), timeout=STATUS_POLL_INLINE_BUDGET_SECONDS)
+        except asyncio.TimeoutError:
+            return
+        finally:
+            self._consume_finished_status_poll_task(server.server_id)
+
+    async def _poll_status_panels(self, *, server: ServerSettings, polled_at_iso: str) -> None:
+        enabled = set(server.enabled_panels)
+        allowed_paths = set(server.working_dirs)
+        previous_repos = [
+            repo for repo in self._repo_cache.get(server.server_id, []) if repo.get("path") in allowed_paths
+        ]
+        status_tasks: dict[str, asyncio.Task] = {}
+
+        if "git" in enabled:
+            status_tasks["git"] = asyncio.create_task(
+                self._poll_git_repos(server, previous_repos=previous_repos, polled_at_iso=polled_at_iso)
+            )
+
+        if "clash" in enabled:
+            secret_result = await self._run_executor(
+                server.ssh_alias,
+                _clash_secret_command(),
+                timeout_seconds=STATUS_COMMAND_TIMEOUT_SECONDS,
+            )
+            if secret_result.exit_code == 0 and not secret_result.error:
+                secret = _extract_clash_secret(secret_result.stdout)
+                if secret:
+                    status_tasks["clash"] = asyncio.create_task(
+                        self._run_executor(
+                            server.ssh_alias,
+                            _clash_command(
+                                api_probe_url=server.clash_api_probe_url,
+                                ui_probe_url=server.clash_ui_probe_url,
+                                secret=secret,
+                            ),
+                            timeout_seconds=STATUS_COMMAND_TIMEOUT_SECONDS,
+                        )
+                    )
+                else:
+                    clash = dict(self._clash_cache.get(server.server_id, DEFAULT_CLASH))
+                    clash["api_reachable"] = False
+                    clash["ui_reachable"] = False
+                    clash["message"] = "secret-unavailable"
+                    clash["last_updated_at"] = polled_at_iso
+                    self._clash_cache[server.server_id] = clash
+                    self._clash_last_updated_at[server.server_id] = polled_at_iso
+                    self._clash_last_poll_ok[server.server_id] = False
+            else:
+                # Transient secret command failures should not overwrite last good clash snapshot.
+                self._clash_last_poll_ok[server.server_id] = False
+
+        status_results: dict[str, object] = {}
+        if status_tasks:
+            gathered = await asyncio.gather(*status_tasks.values(), return_exceptions=True)
+            for key, result in zip(status_tasks.keys(), gathered):
+                status_results[key] = result
+
+        if "git" in status_results:
+            git_result = status_results["git"]
+            if isinstance(git_result, Exception):
+                self._git_last_poll_ok[server.server_id] = False
+            else:
+                polled_repos, successful_polls, repo_poll_ok = git_result
+                total_repos = len(server.working_dirs)
+                self._git_last_poll_ok[server.server_id] = successful_polls == total_repos
+                self._repo_last_poll_ok[server.server_id] = repo_poll_ok
+                if successful_polls > 0 or len(previous_repos) == 0:
+                    self._repo_cache[server.server_id] = polled_repos
+                    self._git_last_updated_at[server.server_id] = polled_at_iso
+
+        if "clash" in status_results:
+            clash_result = status_results["clash"]
+            if isinstance(clash_result, Exception):
+                self._clash_last_poll_ok[server.server_id] = False
+            elif clash_result.exit_code == 0 and not clash_result.error:
+                clash = parse_clash_status(clash_result.stdout)
+                clash["last_updated_at"] = polled_at_iso
+                self._clash_cache[server.server_id] = clash
+                self._clash_last_updated_at[server.server_id] = polled_at_iso
+                self._clash_last_poll_ok[server.server_id] = True
+            else:
+                self._clash_last_poll_ok[server.server_id] = False
 
     async def _poll_git_repos(
         self,
@@ -391,7 +467,11 @@ class DashboardRuntime:
         polled_at_iso: str,
     ) -> tuple[str, dict | None, bool]:
         command = _git_status_command(repo_path)
-        result = await self.executor.run(server.ssh_alias, command)
+        result = await self._run_executor(
+            server.ssh_alias,
+            command,
+            timeout_seconds=STATUS_COMMAND_TIMEOUT_SECONDS,
+        )
         if result.exit_code != 0 or result.error:
             return repo_path, previous_repo, False
         repo = parse_repo_status(
@@ -605,6 +685,7 @@ def _build_freshness_entry(
     last_updated_at: str | None,
     last_poll_ok: bool | None,
     threshold_seconds: float,
+    keep_live_while_inflight: bool = False,
 ) -> dict[str, str | int | float | None]:
     age_seconds = _age_seconds_from_iso(now=now, timestamp_iso=last_updated_at)
     normalized_threshold = float(max(1.0, threshold_seconds))
@@ -616,8 +697,12 @@ def _build_freshness_entry(
         state = "cached"
         reason = "no_data"
     elif age_seconds > normalized_threshold:
-        state = "cached"
-        reason = "age_expired"
+        if keep_live_while_inflight:
+            state = "live"
+            reason = "poll_inflight"
+        else:
+            state = "cached"
+            reason = "age_expired"
     else:
         state = "live"
         reason = "ok"
