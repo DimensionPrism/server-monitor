@@ -15,6 +15,13 @@ const state = {
 const DEFAULT_CLASH_API_PROBE_URL = "http://127.0.0.1:9090/version";
 const DEFAULT_CLASH_UI_PROBE_URL = "http://127.0.0.1:9090/ui";
 const GPU_ACTIVE_THRESHOLD_PERCENT = 10;
+const COMMAND_HEALTH_PANEL_ORDER = ["system", "gpu", "git", "clash"];
+const COMMAND_HEALTH_LABELS = {
+  system: "SYS",
+  gpu: "GPU",
+  git: "GIT",
+  clash: "CLASH",
+};
 
 function byId(id) {
   return document.getElementById(id);
@@ -193,6 +200,47 @@ function renderSummaryMetric(label, value, meta, level = "ok") {
       <div class="summary-metric-value">${escapeHtml(value)}</div>
       <div class="summary-metric-meta">${escapeHtml(meta)}</div>
     </div>
+  `;
+}
+
+function commandHealthOrder(enabledPanels) {
+  return COMMAND_HEALTH_PANEL_ORDER.filter((panel) => enabledPanels.has(panel));
+}
+
+function normalizeCommandHealthSummary(summary) {
+  return {
+    state: summary && typeof summary.state === "string" ? summary.state : "unknown",
+    label: summary && typeof summary.label === "string" && summary.label ? summary.label : "--",
+    detail: summary && typeof summary.detail === "string" && summary.detail ? summary.detail : "No command history yet",
+    updatedAt: summary && typeof summary.updated_at === "string" ? summary.updated_at : null,
+  };
+}
+
+function renderCommandHealthChip(panelName, summary) {
+  const normalized = normalizeCommandHealthSummary(summary);
+  const titleBits = [panelName.toUpperCase(), normalized.detail];
+  if (normalized.updatedAt) {
+    titleBits.push(`Updated ${formatLastUpdate(normalized.updatedAt)}`);
+  }
+  return `
+    <div class="command-health-chip" data-state="${escapeHtml(normalized.state)}" data-command-health-panel="${escapeHtml(panelName)}" title="${escapeHtml(titleBits.join(" • "))}">
+      <span class="command-health-chip-label">${escapeHtml(COMMAND_HEALTH_LABELS[panelName] || panelName.toUpperCase())}</span>
+      <span class="command-health-chip-value">${escapeHtml(normalized.label)}</span>
+    </div>
+  `;
+}
+
+function renderCommandHealthStrip(update, panels) {
+  const orderedPanels = commandHealthOrder(panels);
+  if (orderedPanels.length === 0) {
+    return "";
+  }
+  const commandHealth = update.command_health || {};
+  const chips = orderedPanels.map((panelName) => renderCommandHealthChip(panelName, commandHealth[panelName])).join("");
+  return `
+    <section class="command-health-strip">
+      ${chips}
+    </section>
   `;
 }
 
@@ -385,6 +433,7 @@ function renderMonitor() {
           <h3>${escapeHtml(update.server_id)}</h3>
           ${renderFreshnessBadge(cardFreshness)}
         </header>
+        ${renderCommandHealthStrip(update, panels)}
         ${renderServerSummary(snapshot, panels)}
     `;
 

@@ -72,3 +72,33 @@ def test_normalize_passes_through_freshness():
     )
 
     assert normalized["freshness"]["system"]["state"] == "live"
+
+
+def test_normalize_passes_through_command_health():
+    from server_monitor.dashboard.normalize import normalize_server_payload
+
+    now = datetime(2026, 3, 11, tzinfo=UTC)
+    payload = {
+        "timestamp": now.isoformat(),
+        "snapshot": {"cpu_percent": 10.0},
+        "repos": [],
+        "clash": {"running": True},
+        "command_health": {
+            "system": {
+                "state": "healthy",
+                "label": "182ms",
+                "latency_ms": 182,
+                "detail": "Last poll succeeded",
+                "updated_at": now.isoformat(),
+            }
+        },
+    }
+
+    normalized = normalize_server_payload(
+        server_id="server-a",
+        payload=payload,
+        now=now,
+        stale_after_seconds=10,
+    )
+
+    assert normalized["command_health"]["system"]["label"] == "182ms"

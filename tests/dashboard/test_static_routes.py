@@ -334,6 +334,37 @@ def test_styles_css_has_freshness_badge_rules():
     assert ".freshness-cached" in response.text
 
 
+def test_app_js_wires_command_health_strip_renderer():
+    from server_monitor.dashboard.api import create_dashboard_app
+    from server_monitor.dashboard.ws_hub import WebSocketHub
+
+    app = create_dashboard_app(ws_hub=WebSocketHub())
+    client = TestClient(app)
+
+    response = client.get("/static/app.js")
+
+    assert response.status_code == 200
+    assert "function renderCommandHealthStrip" in response.text
+    assert "update.command_health" in response.text
+    assert "command-health-chip" in response.text
+
+
+def test_styles_css_has_command_health_strip_rules():
+    from server_monitor.dashboard.api import create_dashboard_app
+    from server_monitor.dashboard.ws_hub import WebSocketHub
+
+    app = create_dashboard_app(ws_hub=WebSocketHub())
+    client = TestClient(app)
+
+    response = client.get("/static/styles.css")
+
+    assert response.status_code == 200
+    assert ".command-health-strip" in response.text
+    assert ".command-health-chip" in response.text
+    assert '[data-state="retrying"]' in response.text
+    assert '[data-state="failed"]' in response.text
+
+
 def test_app_js_wires_clash_probe_url_settings_fields():
     from server_monitor.dashboard.api import create_dashboard_app
     from server_monitor.dashboard.ws_hub import WebSocketHub

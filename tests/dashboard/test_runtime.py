@@ -976,6 +976,275 @@ async def test_runtime_runs_status_poll_when_system_retry_recovers():
     assert any("git -C" in call[1] for call in executor.calls)
 
 
+@pytest.mark.asyncio
+async def test_runtime_emits_command_health_latency_for_healthy_system():
+    from server_monitor.dashboard.runtime import DashboardRuntime
+    from server_monitor.dashboard.ws_hub import WebSocketHub
+
+    settings = DashboardSettings(
+        metrics_interval_seconds=1.0,
+        status_interval_seconds=10.0,
+        servers=[
+            ServerSettings(
+                server_id="server-health-system",
+                ssh_alias="srv-health-system",
+                working_dirs=[],
+                enabled_panels=["system"],
+            )
+        ],
+    )
+
+    hub = WebSocketHub()
+    ws = _FakeWebSocket()
+    await hub.connect(ws)
+    runtime = DashboardRuntime(
+        hub=hub,
+        settings_store=_FakeSettingsStore(settings),
+        executor=_FakeExecutor(),
+    )
+
+    await runtime.poll_once()
+
+    payload = ws.messages[0]
+    assert payload["command_health"]["system"]["state"] == "healthy"
+    assert payload["command_health"]["system"]["label"].endswith("ms")
+    assert payload["command_health"]["system"]["updated_at"]
+
+
+@pytest.mark.asyncio
+async def test_runtime_emits_retrying_state_for_successful_retry():
+    from server_monitor.dashboard.runtime import DashboardRuntime
+    from server_monitor.dashboard.ws_hub import WebSocketHub
+
+    settings = DashboardSettings(
+        metrics_interval_seconds=1.0,
+        status_interval_seconds=10.0,
+        servers=[
+            ServerSettings(
+                server_id="server-health-retry",
+                ssh_alias="srv-health-retry",
+                working_dirs=[],
+                enabled_panels=["system"],
+            )
+        ],
+    )
+
+    hub = WebSocketHub()
+    ws = _FakeWebSocket()
+    await hub.connect(ws)
+    runtime = DashboardRuntime(
+        hub=hub,
+        settings_store=_FakeSettingsStore(settings),
+        executor=_RetrySystemTimeoutExecutor(),
+    )
+
+    await runtime.poll_once()
+
+    payload = ws.messages[0]
+    assert payload["command_health"]["system"]["state"] == "retrying"
+    assert payload["command_health"]["system"]["label"] == "retry x2"
+
+
+@pytest.mark.asyncio
+async def test_runtime_emits_failed_state_for_parse_failure():
+    from server_monitor.dashboard.runtime import DashboardRuntime
+    from server_monitor.dashboard.ws_hub import WebSocketHub
+
+    settings = DashboardSettings(
+        metrics_interval_seconds=1.0,
+        status_interval_seconds=10.0,
+        servers=[
+            ServerSettings(
+                server_id="server-health-failed",
+                ssh_alias="srv-health-failed",
+                working_dirs=[],
+                enabled_panels=["system"],
+            )
+        ],
+    )
+
+    hub = WebSocketHub()
+    ws = _FakeWebSocket()
+    await hub.connect(ws)
+    runtime = DashboardRuntime(
+        hub=hub,
+        settings_store=_FakeSettingsStore(settings),
+        executor=_SystemParseFailureExecutor(),
+    )
+
+    await runtime.poll_once()
+
+    payload = ws.messages[0]
+    assert payload["command_health"]["system"]["state"] == "failed"
+    assert payload["command_health"]["system"]["label"] == "failed"
+
+
+@pytest.mark.asyncio
+async def test_runtime_emits_unknown_git_health_when_status_poll_never_runs():
+    from server_monitor.dashboard.runtime import DashboardRuntime
+    from server_monitor.dashboard.ws_hub import WebSocketHub
+
+    settings = DashboardSettings(
+        metrics_interval_seconds=1.0,
+        status_interval_seconds=0.0,
+        servers=[
+            ServerSettings(
+                server_id="server-health-unknown",
+                ssh_alias="srv-health-unknown",
+                working_dirs=["/work/repo-a"],
+                enabled_panels=["system", "git"],
+            )
+        ],
+    )
+
+    hub = WebSocketHub()
+    ws = _FakeWebSocket()
+    await hub.connect(ws)
+    runtime = DashboardRuntime(
+        hub=hub,
+        settings_store=_FakeSettingsStore(settings),
+        executor=_HostUnreachableExecutor(),
+    )
+
+    await runtime.poll_once()
+
+    payload = ws.messages[0]
+    assert payload["command_health"]["git"]["state"] == "unknown"
+    assert payload["command_health"]["git"]["label"] == "--"
+
+
+@pytest.mark.asyncio
+async def test_runtime_emits_cooldown_state_for_clash_after_cooldown_skip():
+    from server_monitor.dashboard.command_policy import CommandKind, CommandPolicy
+    from server_monitor.dashboard.runtime import DashboardRuntime
+    from server_monitor.dashboard.ws_hub import WebSocketHub
+
+    settings = DashboardSettings(
+        metrics_interval_seconds=1.0,
+        status_interval_seconds=0.0,
+        servers=[
+            ServerSettings(
+                server_id="server-health-cooldown",
+                ssh_alias="srv-health-cooldown",
+                working_dirs=[],
+                enabled_panels=["clash"],
+            )
+        ],
+    )
+
+    hub = WebSocketHub()
+    ws = _FakeWebSocket()
+    await hub.connect(ws)
+    runtime = DashboardRuntime(
+        hub=hub,
+        settings_store=_FakeSettingsStore(settings),
+        executor=_AlwaysTimeoutClashSecretExecutor(),
+    )
+    runtime._command_policies[CommandKind.CLASH_SECRET] = CommandPolicy(
+        timeout_seconds=3.0,
+        max_attempts=1,
+        base_backoff_seconds=0.0,
+        retry_on_timeout=True,
+        retry_on_ssh_error=True,
+        retry_on_nonzero_exit=False,
+        cooldown_after_failures=2,
+        cooldown_seconds=60.0,
+    )
+
+    await runtime.poll_once()
+    await runtime.poll_once()
+    await runtime.poll_once()
+
+    payload = ws.messages[-1]
+    assert payload["command_health"]["clash"]["state"] == "cooldown"
+    assert payload["command_health"]["clash"]["label"] == "cooldown"
+
+
+@pytest.mark.asyncio
+async def test_runtime_git_health_uses_worst_repo_state():
+    from server_monitor.dashboard.runtime import DashboardRuntime
+    from server_monitor.dashboard.ws_hub import WebSocketHub
+
+    settings = DashboardSettings(
+        metrics_interval_seconds=1.0,
+        status_interval_seconds=0.0,
+        servers=[
+            ServerSettings(
+                server_id="server-health-git",
+                ssh_alias="srv-health-git",
+                working_dirs=["/work/repo-ok", "/work/repo-fail"],
+                enabled_panels=["git"],
+            )
+        ],
+    )
+
+    hub = WebSocketHub()
+    ws = _FakeWebSocket()
+    await hub.connect(ws)
+    runtime = DashboardRuntime(
+        hub=hub,
+        settings_store=_FakeSettingsStore(settings),
+        executor=_MixedRepoFreshnessExecutor(),
+    )
+
+    await runtime.poll_once()
+    await runtime.poll_once()
+
+    payload = ws.messages[-1]
+    assert payload["command_health"]["git"]["state"] == "failed"
+    assert payload["command_health"]["git"]["label"] == "failed"
+
+
+@pytest.mark.asyncio
+async def test_runtime_clash_health_prefers_secret_failure_over_old_probe_success():
+    from server_monitor.dashboard.command_policy import CommandKind, CommandPolicy
+    from server_monitor.dashboard.runtime import DashboardRuntime
+    from server_monitor.dashboard.ws_hub import WebSocketHub
+
+    settings = DashboardSettings(
+        metrics_interval_seconds=1.0,
+        status_interval_seconds=0.0,
+        servers=[
+            ServerSettings(
+                server_id="server-health-clash",
+                ssh_alias="srv-health-clash",
+                working_dirs=[],
+                enabled_panels=["clash"],
+            )
+        ],
+    )
+
+    hub = WebSocketHub()
+    ws = _FakeWebSocket()
+    await hub.connect(ws)
+    runtime = DashboardRuntime(
+        hub=hub,
+        settings_store=_FakeSettingsStore(settings),
+        executor=_SecretTimeoutAfterSuccessExecutor(),
+    )
+    runtime._command_policies[CommandKind.CLASH_SECRET] = CommandPolicy(
+        timeout_seconds=3.0,
+        max_attempts=1,
+        base_backoff_seconds=0.0,
+        retry_on_timeout=True,
+        retry_on_ssh_error=True,
+        retry_on_nonzero_exit=False,
+        cooldown_after_failures=3,
+        cooldown_seconds=60.0,
+    )
+
+    await runtime.poll_once()
+    first_task = runtime._status_poll_tasks.get("server-health-clash")
+    if first_task is not None:
+        await first_task
+        runtime._consume_finished_status_poll_task("server-health-clash")
+    await runtime.poll_once()
+
+    payload = ws.messages[-1]
+    assert payload["command_health"]["clash"]["state"] == "failed"
+    assert payload["command_health"]["clash"]["label"] == "failed"
+
+
 def test_metrics_sleep_seconds_compensates_poll_time():
     from server_monitor.dashboard.runtime import _metrics_sleep_seconds
 

@@ -16,6 +16,7 @@ Local dashboard for monitoring remote GPU servers over SSH aliases in a single b
   - copy Clash secret from card (`Copy Secret`)
   - secret probe fallback (`clashsecret` -> `clashctl secret` -> `runtime.yaml`)
 - Policy-driven polling retries with short cooldowns for repeated command failures
+- Per-card command health strip with latency-first healthy state and retry/cooldown/failure summaries
 - Exportable diagnostics bundle at `GET /api/diagnostics`
 - Live WebSocket updates in dashboard
 - Git safe operations from dashboard Git panel:

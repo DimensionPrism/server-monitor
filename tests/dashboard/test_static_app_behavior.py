@@ -215,6 +215,98 @@ def test_render_monitor_summary_respects_enabled_panels():
     )
 
 
+def test_render_monitor_displays_command_health_strip_for_enabled_panels():
+    _run_app_js_test(
+        """
+        const grid = document.getElementById("monitor-grid");
+        globalThis.__querySelectorAll = () => [];
+
+        __testExports.state.updates = new Map([
+          [
+            "server-a",
+            {
+              server_id: "server-a",
+              enabled_panels: ["system", "git"],
+              command_health: {
+                system: { state: "healthy", label: "182ms", detail: "Last poll succeeded" },
+                git: { state: "failed", label: "failed", detail: "Repo failed" },
+              },
+              freshness: {},
+              snapshot: {
+                cpu_percent: 10,
+                memory_percent: 20,
+                disk_percent: 30,
+                gpus: [],
+                metadata: {},
+              },
+              repos: [],
+              clash: {},
+            },
+          ],
+        ]);
+
+        __testExports.renderMonitor();
+
+        if (!grid.innerHTML.includes("command-health-strip")) {
+          throw new Error("missing command health strip");
+        }
+        if (!grid.innerHTML.includes("182ms")) {
+          throw new Error("healthy latency label missing");
+        }
+        if (!grid.innerHTML.includes(">failed<")) {
+          throw new Error("degraded state label missing");
+        }
+        """
+    )
+
+
+def test_render_monitor_command_health_strip_preserves_panel_order_and_hides_ok_text():
+    _run_app_js_test(
+        """
+        const grid = document.getElementById("monitor-grid");
+        globalThis.__querySelectorAll = () => [];
+
+        __testExports.state.updates = new Map([
+          [
+            "server-a",
+            {
+              server_id: "server-a",
+              enabled_panels: ["gpu", "git", "clash"],
+              command_health: {
+                gpu: { state: "healthy", label: "244ms", detail: "GPU ok" },
+                git: { state: "retrying", label: "retry x2", detail: "Git retry" },
+                clash: { state: "cooldown", label: "cooldown", detail: "Clash cooling down" },
+              },
+              freshness: {},
+              snapshot: {
+                cpu_percent: 10,
+                memory_percent: 20,
+                disk_percent: 30,
+                gpus: [],
+                metadata: {},
+              },
+              repos: [],
+              clash: {},
+            },
+          ],
+        ]);
+
+        __testExports.renderMonitor();
+
+        const gpuIndex = grid.innerHTML.indexOf('data-command-health-panel="gpu"');
+        const gitIndex = grid.innerHTML.indexOf('data-command-health-panel="git"');
+        const clashIndex = grid.innerHTML.indexOf('data-command-health-panel="clash"');
+
+        if (!(gpuIndex >= 0 && gpuIndex < gitIndex && gitIndex < clashIndex)) {
+          throw new Error(`unexpected command health order: ${grid.innerHTML}`);
+        }
+        if (grid.innerHTML.includes(">ok<")) {
+          throw new Error("healthy chips should not render ok text");
+        }
+        """
+    )
+
+
 def test_add_server_card_defaults_open_only_when_no_servers():
     _run_app_js_test(
         """

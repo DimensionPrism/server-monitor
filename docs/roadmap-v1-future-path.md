@@ -21,13 +21,20 @@
 - Landed: GPU heat cues stay local to GPU contexts instead of escalating the full server card.
 - Landed: Settings now uses a split workspace with overview rail, grouped editor cards, and a sticky save/delete footer.
 - Landed: the `Add Server` form opens by default for first-run setup, then collapses behind an `Add Server` button once saved servers exist.
+- Landed: per-card command health strip shows latency-first healthy state and retry/cooldown/failure summaries for enabled panels.
+
+## v1.2 Status
+
+- Landed: policy-driven retry, bounded backoff, short cooldowns, and recent command health journaling in the poller runtime.
+- Landed: redaction-safe diagnostics bundle backend at `GET /api/diagnostics`.
+- Landed: command latency/error-state telemetry in the monitor UI via the per-card command health strip.
+- Remaining: lightweight failure notifications.
+- Remaining: a user-facing diagnostics export action that packages the existing diagnostics bundle for sharing.
 
 ## Short-Term TODO (1-3 weeks)
 
-1. Add command latency and error-rate telemetry in UI (per server command health strip).
-2. Improve retry and timeout strategy per command type (GPU/System/Git/Clash) with bounded backoff.
-3. Add lightweight notification hooks for failures (desktop toast + optional webhook).
-4. Add exportable diagnostics bundle (current settings + last N poll errors + timings).
+1. Add lightweight notification hooks for failures (desktop toast + optional webhook).
+2. Add a user-facing diagnostics export action built on the existing diagnostics bundle backend.
 
 ## Long-Term Roadmap (1-3 months)
 
