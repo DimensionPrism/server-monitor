@@ -32,6 +32,58 @@ class CommandPolicy:
     cooldown_seconds: float = 15.0
 
 
+@dataclass(slots=True)
+class FailureTracker:
+    """Track consecutive failures and short cooldown windows."""
+
+    cooldown_after_failures: int
+    cooldown_seconds: float
+    consecutive_failures: int = 0
+    cooldown_until: float = 0.0
+
+    def record_failure(self, *, now: float) -> bool:
+        """Record one failure and return whether cooldown started."""
+
+        self.consecutive_failures += 1
+        if self.consecutive_failures < self.cooldown_after_failures:
+            return False
+        self.cooldown_until = now + self.cooldown_seconds
+        return True
+
+    def record_success(self) -> None:
+        """Reset failure streak after a successful execution."""
+
+        self.consecutive_failures = 0
+        self.cooldown_until = 0.0
+
+    def in_cooldown(self, *, now: float) -> bool:
+        """Return whether the tracker is currently suppressing retries."""
+
+        return now < self.cooldown_until
+
+
+@dataclass(slots=True)
+class CommandHealthRecord:
+    """Redaction-safe summary of one command execution."""
+
+    recorded_at: str
+    server_id: str
+    command_kind: CommandKind
+    target_label: str
+    ok: bool
+    failure_class: str
+    attempt_count: int
+    duration_ms: int
+    attempt_durations_ms: list[int]
+    exit_code: int
+    cooldown_applied: bool
+    cache_used: bool
+    message: str
+
+    def __post_init__(self) -> None:
+        self.message = redact_sensitive_text(self.message)
+
+
 def default_command_policies() -> dict[CommandKind, CommandPolicy]:
     """Return the default policy table for dashboard commands."""
 
