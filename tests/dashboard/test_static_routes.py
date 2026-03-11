@@ -212,6 +212,35 @@ def test_styles_css_has_gpu_tile_and_editor_panel_rules():
     assert ".settings-editor-panel" in response.text
 
 
+def test_styles_css_exposes_premium_monitor_classes():
+    from server_monitor.dashboard.api import create_dashboard_app
+    from server_monitor.dashboard.ws_hub import WebSocketHub
+
+    app = create_dashboard_app(ws_hub=WebSocketHub())
+    client = TestClient(app)
+
+    response = client.get("/static/styles.css")
+
+    assert response.status_code == 200
+    assert '.summary-metric[data-level="' in response.text
+    assert '.meter-fill[data-level="' in response.text
+    assert '.gpu-card[data-heat="' in response.text
+
+
+def test_app_js_includes_semantic_summary_and_gpu_heat_helpers():
+    from server_monitor.dashboard.api import create_dashboard_app
+    from server_monitor.dashboard.ws_hub import WebSocketHub
+
+    app = create_dashboard_app(ws_hub=WebSocketHub())
+    client = TestClient(app)
+
+    response = client.get("/static/app.js")
+
+    assert response.status_code == 200
+    assert "function getUtilizationLevel" in response.text
+    assert "function getGpuHeatLevel" in response.text
+
+
 def test_app_js_persists_panel_open_state_on_rerender():
     from server_monitor.dashboard.api import create_dashboard_app
     from server_monitor.dashboard.ws_hub import WebSocketHub
