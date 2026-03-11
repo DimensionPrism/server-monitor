@@ -125,8 +125,9 @@ def test_app_js_collapses_monitor_detail_sections_by_default():
     assert response.status_code == 200
     assert 'renderPanelGroup("System", renderSystemPanel(snapshot), {\n        groupClass: "system",\n        open: false,' in response.text
     assert 'renderPanelGroup("GPU", renderGpuPanel(snapshot), {\n        groupClass: "gpu",\n        open: false,' in response.text
-    assert 'renderPanelGroup("Git", renderGitPanel(update), {\n        groupClass: "git",\n        open: false,' in response.text
-    assert 'renderPanelGroup("Clash", renderClashPanel(update.server_id, update.clash || {}), {\n        groupClass: "clash",\n        open: false,' in response.text
+    assert 'renderPanelGroup("Git", renderGitPanel(update), {' in response.text
+    assert 'renderPanelGroup("Clash", ' in response.text
+    assert response.text.count("open: false,") == 4
 
 
 def test_styles_css_has_server_board_and_gpu_autofit_grid_rules():

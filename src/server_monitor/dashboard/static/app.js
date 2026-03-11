@@ -125,6 +125,50 @@ function metricBar(label, value) {
   `;
 }
 
+function formatPercent(value) {
+  return Number.isFinite(Number(value)) ? `${Math.round(Number(value))}%` : "--";
+}
+
+function summarizeFreshness(freshnessMap) {
+  const entries = Object.values(freshnessMap || {}).filter(Boolean);
+  if (entries.length === 0) {
+    return { state: "cached", reason: "no_data" };
+  }
+  const staleEntry = entries.find((entry) => entry.state !== "live");
+  if (staleEntry) {
+    return { state: "cached", reason: staleEntry.reason || "degraded" };
+  }
+  return { state: "live", reason: "all_live" };
+}
+
+function renderSummaryMetric(label, value, meta) {
+  return `
+    <div class="summary-metric">
+      <div class="summary-metric-label">${escapeHtml(label)}</div>
+      <div class="summary-metric-value">${escapeHtml(value)}</div>
+      <div class="summary-metric-meta">${escapeHtml(meta)}</div>
+    </div>
+  `;
+}
+
+function renderServerSummary(update, snapshot, freshness) {
+  const gpus = Array.isArray(snapshot.gpus) ? snapshot.gpus : [];
+  const gpuPeak = gpus.reduce((maxValue, gpu) => {
+    const utilization = gpu.utilization_gpu_percent ?? gpu.utilization_gpu;
+    return Math.max(maxValue, clampPercent(utilization));
+  }, 0);
+  const gpuValue = gpus.length > 0 ? `${Math.round(gpuPeak)}%` : "--";
+  const gpuMeta = gpus.length > 0 ? `${gpus.length} GPUs` : "No GPU data";
+  return `
+    <section class="server-summary-rail">
+      ${renderSummaryMetric("CPU", formatPercent(snapshot.cpu_percent), "Host load")}
+      ${renderSummaryMetric("Memory", formatPercent(snapshot.memory_percent), "RAM used")}
+      ${renderSummaryMetric("Disk", formatPercent(snapshot.disk_percent), "Disk used")}
+      ${renderSummaryMetric("GPU", gpuValue, gpuMeta)}
+    </section>
+  `;
+}
+
 function renderPanelGroup(title, contentHtml, options = {}) {
   const groupClass = options.groupClass ? `panel-group panel-group-${options.groupClass}` : "panel-group";
   const serverId = String(options.serverId || "");
@@ -276,18 +320,21 @@ function renderMonitor() {
     const panels = new Set(update.enabled_panels || ["system", "gpu", "git", "clash"]);
     const freshness = update.freshness || {};
     const snapshot = update.snapshot || {};
+    const cardFreshness = summarizeFreshness(freshness);
 
     let html = `
       <article class="card server-card" data-server-id="${escapeHtml(update.server_id)}">
         <header class="server-card-head">
           <h3>${escapeHtml(update.server_id)}</h3>
+          ${renderFreshnessBadge(cardFreshness)}
         </header>
+        ${renderServerSummary(update, snapshot, freshness)}
     `;
 
     if (panels.has("system")) {
       html += renderPanelGroup("System", renderSystemPanel(snapshot), {
         groupClass: "system",
-        open: true,
+        open: false,
         serverId: update.server_id,
         summaryBadgeHtml: renderFreshnessBadge(freshness.system),
       });
@@ -296,7 +343,7 @@ function renderMonitor() {
     if (panels.has("gpu")) {
       html += renderPanelGroup("GPU", renderGpuPanel(snapshot), {
         groupClass: "gpu",
-        open: true,
+        open: false,
         serverId: update.server_id,
         summaryBadgeHtml: renderFreshnessBadge(freshness.gpu),
       });
