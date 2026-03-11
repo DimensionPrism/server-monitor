@@ -9,3 +9,4 @@ dist/
 build/
 logs/
 config/servers.toml
+.superpowers/
