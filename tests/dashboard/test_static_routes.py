@@ -16,6 +16,21 @@ def test_root_serves_dashboard_html():
     assert "new-clash-ui-probe-url" in response.text
 
 
+def test_root_serves_settings_workspace_shell():
+    from server_monitor.dashboard.api import create_dashboard_app
+    from server_monitor.dashboard.ws_hub import WebSocketHub
+
+    app = create_dashboard_app(ws_hub=WebSocketHub())
+    client = TestClient(app)
+
+    response = client.get("/")
+
+    assert response.status_code == 200
+    assert "settings-shell" in response.text
+    assert "settings-overview" in response.text
+    assert "settings-editor-panel" in response.text
+
+
 def test_app_js_includes_safe_git_ops_controls():
     from server_monitor.dashboard.api import create_dashboard_app
     from server_monitor.dashboard.ws_hub import WebSocketHub
@@ -29,6 +44,21 @@ def test_app_js_includes_safe_git_ops_controls():
     assert "data-git-op=\"fetch\"" in response.text
     assert "data-git-op=\"pull\"" in response.text
     assert "data-git-op=\"checkout\"" in response.text
+
+
+def test_app_js_includes_settings_overview_selection_flow():
+    from server_monitor.dashboard.api import create_dashboard_app
+    from server_monitor.dashboard.ws_hub import WebSocketHub
+
+    app = create_dashboard_app(ws_hub=WebSocketHub())
+    client = TestClient(app)
+
+    response = client.get("/static/app.js")
+
+    assert response.status_code == 200
+    assert "selectedSettingsServerId" in response.text
+    assert "function renderSettingsOverview" in response.text
+    assert "function renderSettingsEditorPanel" in response.text
 
 
 def test_app_js_renders_summary_first_monitor_helpers():
