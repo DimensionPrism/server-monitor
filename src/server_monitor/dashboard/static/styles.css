@@ -620,11 +620,38 @@ main {
   justify-content: space-between;
   align-items: center;
   gap: 0.75rem;
+  position: sticky;
+  bottom: 0;
+  backdrop-filter: blur(14px);
+  box-shadow: 0 18px 38px rgba(1, 7, 16, 0.22);
 }
 
 .settings-editor-footer-actions {
   display: inline-flex;
   gap: 0.75rem;
+}
+
+.settings-editor-footer-status {
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+
+.settings-editor-footer[data-dirty-state="dirty"] {
+  border-color: rgba(34, 211, 238, 0.34);
+  box-shadow: 0 18px 36px rgba(14, 165, 233, 0.14);
+}
+
+.settings-editor-footer[data-dirty-state="dirty"] .settings-editor-footer-status::before {
+  content: "Unsaved changes";
+  color: #8fdcff;
+}
+
+.settings-editor-footer[data-dirty-state="clean"] .settings-editor-footer-status::before {
+  content: "All changes saved";
+}
+
+.settings-editor-footer[data-save-state="saved"] .settings-editor-footer-status {
+  color: #8fdcff;
 }
 
 .settings-editor-empty {

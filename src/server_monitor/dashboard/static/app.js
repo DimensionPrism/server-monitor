@@ -3,6 +3,7 @@ const state = {
   settings: null,
   selectedSettingsServerId: null,
   settingsDrafts: new Map(),
+  settingsSaveStates: new Map(),
   gitOps: new Map(),
   panelOpenState: new Map(),
   clashSecrets: new Map(),
@@ -683,6 +684,25 @@ function readSettingsDraft(server) {
   return draft;
 }
 
+function normalizeDraftForCompare(draft) {
+  return {
+    server_id: draft.server_id,
+    ssh_alias: (draft.ssh_alias || "").trim(),
+    working_dirs_raw: toLines(draft.working_dirs_raw || "").join("\n"),
+    clash_api_probe_url: ((draft.clash_api_probe_url || "").trim() || DEFAULT_CLASH_API_PROBE_URL),
+    clash_ui_probe_url: ((draft.clash_ui_probe_url || "").trim() || DEFAULT_CLASH_UI_PROBE_URL),
+    enabled_panels: Array.isArray(draft.enabled_panels) ? draft.enabled_panels.slice().sort() : [],
+  };
+}
+
+function isServerDraftDirty(server, draft) {
+  if (!server || !draft) {
+    return false;
+  }
+  const baseline = createSettingsDraft(server);
+  return JSON.stringify(normalizeDraftForCompare(draft)) !== JSON.stringify(normalizeDraftForCompare(baseline));
+}
+
 function extractServerEditorDraft(editor) {
   if (!editor) {
     return null;
@@ -727,8 +747,9 @@ function selectSettingsServer(serverId) {
 
 function renderSettingsEditorFooter(options = {}) {
   const dirtyState = options.dirty ? "dirty" : "clean";
+  const saveState = options.saveState || "idle";
   return `
-    <footer class="settings-editor-footer" data-dirty-state="${dirtyState}">
+    <footer class="settings-editor-footer" data-dirty-state="${dirtyState}" data-save-state="${saveState}">
       <div class="settings-editor-footer-status" data-role="status"></div>
       <div class="settings-editor-footer-actions">
         <button class="btn-primary" data-action="save" type="button">Save</button>
@@ -738,70 +759,83 @@ function renderSettingsEditorFooter(options = {}) {
   `;
 }
 
-function renderSettingsEditorCards(server) {
-  const draft = readSettingsDraft(server);
+function renderSettingsEditorCards(server, draft) {
   const panelSet = new Set(draft.enabled_panels || []);
   const dirs = draft.working_dirs_raw || "";
   const clashApiProbeUrl = draft.clash_api_probe_url ?? DEFAULT_CLASH_API_PROBE_URL;
   const clashUiProbeUrl = draft.clash_ui_probe_url ?? DEFAULT_CLASH_UI_PROBE_URL;
   return `
-    <div class="server-editor" data-server-id="${escapeHtml(server.server_id)}">
-      <div class="settings-editor-head">
-        <h3>${escapeHtml(server.server_id)}</h3>
-        <p class="muted">Edit connection, targets, panels, and Clash probe details for this server.</p>
+    <div class="settings-editor-head">
+      <h3>${escapeHtml(server.server_id)}</h3>
+      <p class="muted">Edit connection, targets, panels, and Clash probe details for this server.</p>
+    </div>
+    <section class="settings-editor-card settings-editor-card-identity">
+      <div class="settings-card-head">
+        <h4>Identity</h4>
+        <p class="muted">Connection details used to reach the server.</p>
       </div>
-      <section class="settings-editor-card settings-editor-card-identity">
+      <label>
+        SSH Alias
+        <input data-field="ssh_alias" type="text" value="${escapeHtml(draft.ssh_alias || "")}" />
+      </label>
+    </section>
+    <section class="settings-editor-card settings-editor-card-targets">
+      <div class="settings-card-head">
+        <h4>Monitoring Targets</h4>
+        <p class="muted">Working directories are checked in the git panel.</p>
+      </div>
+      <label>
+        Working Directories (one per line)
+        <textarea data-field="working_dirs" rows="6">${escapeHtml(dirs)}</textarea>
+      </label>
+    </section>
+    <div class="settings-editor-row">
+      <section class="settings-editor-card settings-editor-card-panels">
         <div class="settings-card-head">
-          <h4>Identity</h4>
-          <p class="muted">Connection details used to reach the server.</p>
+          <h4>Panels</h4>
+          <p class="muted">Control which sections appear on the monitor card.</p>
+        </div>
+        <fieldset>
+          <legend>Enabled Panels</legend>
+          <label><input data-panel="system" type="checkbox" ${panelSet.has("system") ? "checked" : ""} /> System</label>
+          <label><input data-panel="gpu" type="checkbox" ${panelSet.has("gpu") ? "checked" : ""} /> GPU</label>
+          <label><input data-panel="git" type="checkbox" ${panelSet.has("git") ? "checked" : ""} /> Git</label>
+          <label><input data-panel="clash" type="checkbox" ${panelSet.has("clash") ? "checked" : ""} /> Clash</label>
+        </fieldset>
+      </section>
+      <section class="settings-editor-card settings-editor-card-probes">
+        <div class="settings-card-head">
+          <h4>Clash Probes</h4>
+          <p class="muted">Probe URLs are used for API and UI reachability checks.</p>
         </div>
         <label>
-          SSH Alias
-          <input data-field="ssh_alias" type="text" value="${escapeHtml(draft.ssh_alias || "")}" />
+          Clash API Probe URL
+          <input data-field="clash_api_probe_url" type="text" value="${escapeHtml(clashApiProbeUrl)}" />
         </label>
-      </section>
-      <section class="settings-editor-card settings-editor-card-targets">
-        <div class="settings-card-head">
-          <h4>Monitoring Targets</h4>
-          <p class="muted">Working directories are checked in the git panel.</p>
-        </div>
         <label>
-          Working Directories (one per line)
-          <textarea data-field="working_dirs" rows="6">${escapeHtml(dirs)}</textarea>
+          Clash UI Probe URL
+          <input data-field="clash_ui_probe_url" type="text" value="${escapeHtml(clashUiProbeUrl)}" />
         </label>
       </section>
-      <div class="settings-editor-row">
-        <section class="settings-editor-card settings-editor-card-panels">
-          <div class="settings-card-head">
-            <h4>Panels</h4>
-            <p class="muted">Control which sections appear on the monitor card.</p>
-          </div>
-          <fieldset>
-            <legend>Enabled Panels</legend>
-            <label><input data-panel="system" type="checkbox" ${panelSet.has("system") ? "checked" : ""} /> System</label>
-            <label><input data-panel="gpu" type="checkbox" ${panelSet.has("gpu") ? "checked" : ""} /> GPU</label>
-            <label><input data-panel="git" type="checkbox" ${panelSet.has("git") ? "checked" : ""} /> Git</label>
-            <label><input data-panel="clash" type="checkbox" ${panelSet.has("clash") ? "checked" : ""} /> Clash</label>
-          </fieldset>
-        </section>
-        <section class="settings-editor-card settings-editor-card-probes">
-          <div class="settings-card-head">
-            <h4>Clash Probes</h4>
-            <p class="muted">Probe URLs are used for API and UI reachability checks.</p>
-          </div>
-          <label>
-            Clash API Probe URL
-            <input data-field="clash_api_probe_url" type="text" value="${escapeHtml(clashApiProbeUrl)}" />
-          </label>
-          <label>
-            Clash UI Probe URL
-            <input data-field="clash_ui_probe_url" type="text" value="${escapeHtml(clashUiProbeUrl)}" />
-          </label>
-        </section>
-      </div>
-      ${renderSettingsEditorFooter({ dirty: false })}
     </div>
   `;
+}
+
+function updateSettingsEditorFooterState(editor, server) {
+  if (!editor || !server) {
+    return;
+  }
+  const footer = editor.querySelector(".settings-editor-footer");
+  if (!footer) {
+    return;
+  }
+  const draft = extractServerEditorDraft(editor);
+  if (!draft) {
+    return;
+  }
+  state.settingsDrafts.set(server.server_id, draft);
+  footer.dataset.dirtyState = isServerDraftDirty(server, draft) ? "dirty" : "clean";
+  footer.dataset.saveState = "idle";
 }
 
 function serverOverviewRowTemplate(server, isSelected) {
@@ -831,6 +865,18 @@ function bindServerEditorEvents() {
   editors.forEach((editor) => {
     const serverId = editor.getAttribute("data-server-id");
     const statusEl = editor.querySelector('[data-role="status"]');
+    const server = state.settings && state.settings.servers
+      ? state.settings.servers.find((item) => item.server_id === serverId)
+      : null;
+
+    editor.querySelectorAll("input, textarea").forEach((field) => {
+      field.addEventListener("input", () => {
+        updateSettingsEditorFooterState(editor, server);
+      });
+      field.addEventListener("change", () => {
+        updateSettingsEditorFooterState(editor, server);
+      });
+    });
 
     editor.querySelector('[data-action="save"]').addEventListener("click", async () => {
       const draft = extractServerEditorDraft(editor);
@@ -853,6 +899,7 @@ function bindServerEditorEvents() {
           clash_ui_probe_url: clashUiProbeUrl,
         });
         state.settingsDrafts.delete(serverId);
+        state.settingsSaveStates.set(serverId, "saved");
         statusEl.textContent = "Saved";
         await loadSettings();
       } catch (err) {
@@ -864,6 +911,7 @@ function bindServerEditorEvents() {
       try {
         await api("DELETE", `/api/servers/${serverId}`);
         state.settingsDrafts.delete(serverId);
+        state.settingsSaveStates.delete(serverId);
         if (state.selectedSettingsServerId === serverId) {
           state.selectedSettingsServerId = null;
         }
@@ -917,7 +965,15 @@ function renderSettingsEditorPanel(servers) {
     panel.innerHTML = '<div class="settings-editor-empty"><p class="muted">Select a server to edit its settings.</p></div>';
     return;
   }
-  panel.innerHTML = renderSettingsEditorCards(selectedServer);
+  const draft = readSettingsDraft(selectedServer);
+  const dirty = isServerDraftDirty(selectedServer, draft);
+  const saveState = state.settingsSaveStates.get(selectedServer.server_id) || "idle";
+  panel.innerHTML = `
+    <div class="server-editor" data-server-id="${escapeHtml(selectedServer.server_id)}" data-transition-state="entering">
+      ${renderSettingsEditorCards(selectedServer, draft)}
+      ${renderSettingsEditorFooter({ dirty, saveState })}
+    </div>
+  `;
   bindServerEditorEvents();
 }
 
@@ -940,6 +996,12 @@ function renderSettings() {
 async function loadSettings() {
   const settings = await api("GET", "/api/settings");
   state.settings = settings;
+  const validServerIds = new Set((settings.servers || []).map((server) => server.server_id));
+  Array.from(state.settingsSaveStates.keys()).forEach((serverId) => {
+    if (!validServerIds.has(serverId)) {
+      state.settingsSaveStates.delete(serverId);
+    }
+  });
   renderSettings();
 }
 
