@@ -34,6 +34,20 @@ def test_root_serves_split_settings_workspace_shell():
     assert "settings-editor-panel" in response.text
 
 
+def test_root_serves_add_server_toggle_hooks():
+    from server_monitor.dashboard.api import create_dashboard_app
+    from server_monitor.dashboard.ws_hub import WebSocketHub
+
+    app = create_dashboard_app(ws_hub=WebSocketHub())
+    client = TestClient(app)
+
+    response = client.get("/")
+
+    assert response.status_code == 200
+    assert "settings-add-toggle" in response.text
+    assert "settings-add-card" in response.text
+
+
 def test_app_js_includes_safe_git_ops_controls():
     from server_monitor.dashboard.api import create_dashboard_app
     from server_monitor.dashboard.ws_hub import WebSocketHub

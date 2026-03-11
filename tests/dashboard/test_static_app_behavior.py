@@ -17,6 +17,7 @@ def _run_app_js_test(js_test: str) -> None:
         source = source.replace(/\\r?\\ninit\\(\\);\\s*$/, "\\n");
 
         function makeElement(id = "") {{
+          const listeners = {{}};
           return {{
             id,
             innerHTML: "",
@@ -32,7 +33,10 @@ def _run_app_js_test(js_test: str) -> None:
               add() {{}},
               remove() {{}},
             }},
-            addEventListener() {{}},
+            __listeners: listeners,
+            addEventListener(type, handler) {{
+              listeners[type] = handler;
+            }},
             querySelector() {{ return null; }},
             querySelectorAll() {{ return []; }},
             closest() {{ return null; }},
@@ -93,12 +97,17 @@ def _run_app_js_test(js_test: str) -> None:
           WebSocket,
           setTimeout() {{}},
           clearTimeout() {{}},
-          fetch: async () => ({{
-            status: 204,
-            ok: true,
-            json: async () => ({{ servers: [] }}),
-            text: async () => "",
-          }}),
+          fetch: async (...args) => {{
+            if (globalThis.__fetch) {{
+              return globalThis.__fetch(...args);
+            }}
+            return {{
+              status: 204,
+              ok: true,
+              json: async () => ({{ servers: [] }}),
+              text: async () => "",
+            }};
+          }},
           Map,
           Set,
           Date,
@@ -120,18 +129,27 @@ def _run_app_js_test(js_test: str) -> None:
             renderMonitor,
             renderSettings,
             renderSettingsEditorPanel,
-            renderSettingsOverview,
-            renderServerSummary: typeof renderServerSummary !== "undefined" ? renderServerSummary : undefined,
-            selectSettingsServer: typeof selectSettingsServer !== "undefined" ? selectSettingsServer : undefined,
-            captureCurrentServerEditorDraft: typeof captureCurrentServerEditorDraft !== "undefined" ? captureCurrentServerEditorDraft : undefined,
-            extractServerEditorDraft: typeof extractServerEditorDraft !== "undefined" ? extractServerEditorDraft : undefined,
-          }};
-          `,
+              renderSettingsOverview,
+              renderServerSummary: typeof renderServerSummary !== "undefined" ? renderServerSummary : undefined,
+              selectSettingsServer: typeof selectSettingsServer !== "undefined" ? selectSettingsServer : undefined,
+              captureCurrentServerEditorDraft: typeof captureCurrentServerEditorDraft !== "undefined" ? captureCurrentServerEditorDraft : undefined,
+              extractServerEditorDraft: typeof extractServerEditorDraft !== "undefined" ? extractServerEditorDraft : undefined,
+              bindAddServerForm: typeof bindAddServerForm !== "undefined" ? bindAddServerForm : undefined,
+              resetAddServerForm: typeof resetAddServerForm !== "undefined" ? resetAddServerForm : undefined,
+              setSettingsAddExpanded: typeof setSettingsAddExpanded !== "undefined" ? setSettingsAddExpanded : undefined,
+              renderSettingsAddCard: typeof renderSettingsAddCard !== "undefined" ? renderSettingsAddCard : undefined,
+            }};
+            `,
           sandbox,
         );
         const __testExports = sandbox.__testExports;
 
+        (async () => {{
         {js_test}
+        }})().catch((error) => {{
+          console.error(error && error.stack ? error.stack : error);
+          process.exit(1);
+        }});
         """
     )
     proc = subprocess.run(
@@ -192,6 +210,140 @@ def test_render_monitor_summary_respects_enabled_panels():
         }
         if (grid.innerHTML.includes("freshness-cached")) {
           throw new Error("freshness badge leaked from disabled panels");
+        }
+        """
+    )
+
+
+def test_add_server_card_defaults_open_only_when_no_servers():
+    _run_app_js_test(
+        """
+        const shell = document.getElementById("settings-shell");
+        const addCard = document.getElementById("settings-add-card");
+
+        __testExports.state.settings = { servers: [] };
+        __testExports.state.settingsAddTouched = false;
+        __testExports.renderSettings();
+        const emptyState = shell.dataset.addExpanded || addCard.dataset.expanded || "missing";
+
+        __testExports.state.settings = {
+          servers: [
+            {
+              server_id: "server-a",
+              ssh_alias: "alias-a",
+              working_dirs: ["/work/a"],
+              enabled_panels: ["system"],
+              clash_api_probe_url: "http://127.0.0.1:9090/version",
+              clash_ui_probe_url: "http://127.0.0.1:9090/ui",
+            },
+          ],
+        };
+        __testExports.state.settingsAddTouched = false;
+        __testExports.renderSettings();
+        const existingState = shell.dataset.addExpanded || addCard.dataset.expanded || "missing";
+
+        if (emptyState !== "open") {
+          throw new Error(`expected empty-state add card to be open, got ${emptyState}`);
+        }
+        if (existingState !== "collapsed") {
+          throw new Error(`expected existing-state add card to be collapsed, got ${existingState}`);
+        }
+        """
+    )
+
+
+def test_add_server_card_collapses_and_resets_after_add():
+    _run_app_js_test(
+        """
+        const shell = document.getElementById("settings-shell");
+        const form = document.getElementById("add-server-form");
+        const serverIdInput = document.getElementById("new-server-id");
+        const aliasInput = document.getElementById("new-server-alias");
+        const dirsInput = document.getElementById("new-server-dirs");
+        const apiProbeInput = document.getElementById("new-clash-api-probe-url");
+        const uiProbeInput = document.getElementById("new-clash-ui-probe-url");
+
+        const panelInputs = [
+          { value: "system", checked: true },
+          { value: "gpu", checked: true },
+          { value: "git", checked: true },
+          { value: "clash", checked: true },
+        ];
+
+        globalThis.__querySelectorAll = (selector) => {
+          if (selector === 'input[name="new-panel"]:checked') {
+            return panelInputs.filter((input) => input.checked);
+          }
+          if (selector === 'input[name="new-panel"]') {
+            return panelInputs;
+          }
+          return [];
+        };
+
+        globalThis.__fetch = async (url, options = {}) => {
+          if (url === "/api/servers" && options.method === "POST") {
+            return {
+              status: 204,
+              ok: true,
+              json: async () => null,
+              text: async () => "",
+            };
+          }
+          if (url === "/api/settings" && options.method === "GET") {
+            return {
+              status: 200,
+              ok: true,
+              json: async () => ({
+                servers: [
+                  {
+                    server_id: "server-a",
+                    ssh_alias: "gpu-a",
+                    working_dirs: ["/work/a"],
+                    enabled_panels: ["system", "gpu", "git", "clash"],
+                    clash_api_probe_url: "http://127.0.0.1:9090/version",
+                    clash_ui_probe_url: "http://127.0.0.1:9090/ui",
+                  },
+                ],
+              }),
+              text: async () => "",
+            };
+          }
+          return {
+            status: 204,
+            ok: true,
+            json: async () => null,
+            text: async () => "",
+          };
+        };
+
+        serverIdInput.value = "server-a";
+        aliasInput.value = "gpu-a";
+        dirsInput.value = "/work/a";
+        apiProbeInput.value = "http://127.0.0.1:19090/version";
+        uiProbeInput.value = "http://127.0.0.1:19090/ui";
+        form.reset = () => {
+          serverIdInput.value = "";
+          aliasInput.value = "";
+          dirsInput.value = "";
+          apiProbeInput.value = "";
+          uiProbeInput.value = "";
+        };
+
+        if (typeof __testExports.bindAddServerForm !== "function") {
+          throw new Error("bindAddServerForm missing");
+        }
+
+        __testExports.bindAddServerForm();
+        await form.__listeners.submit({ preventDefault() {} });
+
+        const collapsedAfterAdd = (shell.dataset.addExpanded || "missing") === "collapsed";
+        const serverIdAfterCollapse = serverIdInput.value;
+
+        if (!collapsedAfterAdd) {
+          throw new Error("add card did not collapse after successful add");
+        }
+        if (serverIdAfterCollapse !== "") {
+          throw new Error("add form did not reset after collapsing");
         }
         """
     )
