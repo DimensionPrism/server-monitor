@@ -245,6 +245,7 @@ function renderGitPanel(update) {
             <button class="btn-pill" type="button" data-git-op="refresh">Refresh</button>
             <button class="btn-pill" type="button" data-git-op="fetch">Fetch</button>
             <button class="btn-pill" type="button" data-git-op="pull">Pull</button>
+            <button class="btn-pill" type="button" data-git-open-terminal>Open in Terminal</button>
             <input class="branch-input" data-role="branch" type="text" placeholder="branch/name" />
             <button class="btn-pill" type="button" data-git-op="checkout">Checkout</button>
           </div>
@@ -390,6 +391,23 @@ async function runGitOperation(serverId, repoPath, operation, branch) {
   renderMonitor();
 }
 
+async function openRepoTerminal(serverId, repoPath) {
+  writeGitOpState(serverId, repoPath, "running", "opening terminal...");
+  renderMonitor();
+
+  try {
+    const response = await api("POST", `/api/servers/${encodeURIComponent(serverId)}/git/open-terminal`, { repo_path: repoPath });
+    const launchedWith = response && typeof response.launched_with === "string" ? response.launched_with.trim() : "";
+    const viaSuffix = launchedWith ? ` (${launchedWith})` : "";
+    const ok = Boolean(response && response.ok);
+    writeGitOpState(serverId, repoPath, ok ? "ok" : "fail", ok ? `opened in terminal${viaSuffix}` : "open terminal failed");
+  } catch (err) {
+    writeGitOpState(serverId, repoPath, "fail", `open terminal failed: ${err.message}`);
+  }
+
+  renderMonitor();
+}
+
 async function copyTextToClipboard(text) {
   if (navigator.clipboard && window.isSecureContext) {
     await navigator.clipboard.writeText(text);
@@ -465,6 +483,26 @@ function bindGitControlEvents() {
         return;
       }
       await runGitOperation(serverId, repoPath, operation, branch);
+    });
+  });
+
+  const openTerminalButtons = document.querySelectorAll("button[data-git-open-terminal]");
+  openTerminalButtons.forEach((button) => {
+    if (button.dataset.bound === "1") {
+      return;
+    }
+    button.dataset.bound = "1";
+    button.addEventListener("click", async () => {
+      const repoNode = button.closest(".git-repo");
+      if (!repoNode) {
+        return;
+      }
+      const serverId = repoNode.getAttribute("data-server-id");
+      const repoPath = repoNode.getAttribute("data-repo-path");
+      if (!serverId || !repoPath) {
+        return;
+      }
+      await openRepoTerminal(serverId, repoPath);
     });
   });
 }

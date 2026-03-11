@@ -54,6 +54,10 @@ class GitOpPayload(BaseModel):
     branch: str | None = None
 
 
+class GitOpenTerminalPayload(BaseModel):
+    repo_path: str
+
+
 SAFE_GIT_OPERATIONS = {"refresh", "fetch", "pull", "checkout"}
 
 
@@ -91,6 +95,12 @@ def _find_server(settings: DashboardSettings, server_id: str) -> ServerSettings:
 def _require_git_runtime(runtime):
     if runtime is None or not hasattr(runtime, "run_git_operation"):
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="git operations unavailable")
+    return runtime
+
+
+def _require_open_terminal_runtime(runtime):
+    if runtime is None or not hasattr(runtime, "open_repo_terminal"):
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="git open-terminal unavailable")
     return runtime
 
 
@@ -258,6 +268,21 @@ def create_dashboard_app(
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
         except ValueError as exc:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+    @app.post("/api/servers/{server_id}/git/open-terminal")
+    async def open_git_terminal(server_id: str, payload: GitOpenTerminalPayload) -> dict:
+        open_terminal_runtime = _require_open_terminal_runtime(runtime)
+        try:
+            return await open_terminal_runtime.open_repo_terminal(
+                server_id=server_id,
+                repo_path=payload.repo_path,
+            )
+        except KeyError as exc:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        except RuntimeError as exc:
+            raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
 
     @app.post("/api/servers/{server_id}/clash/tunnel/open")
     async def open_clash_tunnel(server_id: str) -> dict:

@@ -4,6 +4,7 @@ from fastapi.testclient import TestClient
 class _FakeGitRuntime:
     def __init__(self):
         self.calls = []
+        self.open_terminal_calls = []
         self.fail_mode = None
 
     async def run_git_operation(self, *, server_id: str, repo_path: str, operation: str, branch: str | None = None):
@@ -36,6 +37,25 @@ class _FakeGitRuntime:
                 "untracked": 0,
                 "last_commit_age_seconds": 0,
             },
+        }
+
+    async def open_repo_terminal(self, *, server_id: str, repo_path: str):
+        self.open_terminal_calls.append(
+            {
+                "server_id": server_id,
+                "repo_path": repo_path,
+            }
+        )
+        if self.fail_mode == "not_found":
+            raise KeyError("unknown server")
+        if self.fail_mode == "bad_request":
+            raise ValueError("repo not allowed")
+        if self.fail_mode == "open_failed":
+            raise RuntimeError("terminal launch failed")
+        return {
+            "ok": True,
+            "launched_with": "x-terminal-emulator",
+            "detail": "opened",
         }
 
 
@@ -249,6 +269,66 @@ def test_settings_api_git_ops_rejects_unknown_operation(tmp_path):
     )
     assert response.status_code == 400
     assert runtime.calls == []
+
+
+def test_settings_api_open_terminal_dispatches_to_runtime(tmp_path):
+    runtime = _FakeGitRuntime()
+    client = _make_client(tmp_path, runtime=runtime)
+
+    client.post(
+        "/api/servers",
+        json={
+            "server_id": "srv-open",
+            "ssh_alias": "server-open",
+            "working_dirs": ["/work/repo-open"],
+            "enabled_panels": ["git"],
+        },
+    )
+
+    response = client.post(
+        "/api/servers/srv-open/git/open-terminal",
+        json={"repo_path": "/work/repo-open"},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["ok"] is True
+    assert body["launched_with"] == "x-terminal-emulator"
+    assert runtime.open_terminal_calls == [{"server_id": "srv-open", "repo_path": "/work/repo-open"}]
+
+
+def test_settings_api_open_terminal_requires_runtime(tmp_path):
+    client = _make_client(tmp_path)
+
+    response = client.post(
+        "/api/servers/srv-open/git/open-terminal",
+        json={"repo_path": "/work/repo-open"},
+    )
+    assert response.status_code == 503
+
+
+def test_settings_api_open_terminal_maps_runtime_validation_errors(tmp_path):
+    runtime = _FakeGitRuntime()
+    runtime.fail_mode = "bad_request"
+    client = _make_client(tmp_path, runtime=runtime)
+
+    response = client.post(
+        "/api/servers/srv-open/git/open-terminal",
+        json={"repo_path": "/work/not-allowed"},
+    )
+    assert response.status_code == 400
+
+
+def test_settings_api_open_terminal_maps_runtime_error(tmp_path):
+    runtime = _FakeGitRuntime()
+    runtime.fail_mode = "open_failed"
+    client = _make_client(tmp_path, runtime=runtime)
+
+    response = client.post(
+        "/api/servers/srv-open/git/open-terminal",
+        json={"repo_path": "/work/repo-open"},
+    )
+    assert response.status_code == 502
 
 
 def test_settings_api_clash_tunnel_open_dispatches_to_manager(tmp_path):

@@ -458,6 +458,76 @@ async def test_runtime_git_op_fetch_returns_refreshed_repo_status():
 
 
 @pytest.mark.asyncio
+async def test_runtime_open_repo_terminal_rejects_repo_not_in_allowlist():
+    from server_monitor.dashboard.runtime import DashboardRuntime
+    from server_monitor.dashboard.ws_hub import WebSocketHub
+
+    settings = DashboardSettings(
+        servers=[
+            ServerSettings(
+                server_id="server-open-e",
+                ssh_alias="srv-open-e",
+                working_dirs=["/work/repo-open-e"],
+                enabled_panels=["git"],
+            )
+        ]
+    )
+    runtime = DashboardRuntime(
+        hub=WebSocketHub(),
+        settings_store=_FakeSettingsStore(settings),
+        executor=_GitOpExecutor(),
+        terminal_launcher=lambda **_: None,
+    )
+
+    with pytest.raises(ValueError):
+        await runtime.open_repo_terminal(
+            server_id="server-open-e",
+            repo_path="/work/not-allowed",
+        )
+
+
+@pytest.mark.asyncio
+async def test_runtime_open_repo_terminal_dispatches_to_launcher():
+    from server_monitor.dashboard.runtime import DashboardRuntime
+    from server_monitor.dashboard.ws_hub import WebSocketHub
+
+    settings = DashboardSettings(
+        servers=[
+            ServerSettings(
+                server_id="server-open-f",
+                ssh_alias="srv-open-f",
+                working_dirs=["/work/repo-open-f"],
+                enabled_panels=["git"],
+            )
+        ]
+    )
+
+    calls = []
+
+    def _fake_launcher(*, ssh_alias: str, repo_path: str):
+        from server_monitor.dashboard.terminal_launcher import LaunchResult
+
+        calls.append((ssh_alias, repo_path))
+        return LaunchResult(ok=True, launched_with="x-terminal-emulator", detail="opened")
+
+    runtime = DashboardRuntime(
+        hub=WebSocketHub(),
+        settings_store=_FakeSettingsStore(settings),
+        executor=_GitOpExecutor(),
+        terminal_launcher=_fake_launcher,
+    )
+
+    result = await runtime.open_repo_terminal(
+        server_id="server-open-f",
+        repo_path="/work/repo-open-f",
+    )
+
+    assert result["ok"] is True
+    assert result["launched_with"] == "x-terminal-emulator"
+    assert calls == [("srv-open-f", "/work/repo-open-f")]
+
+
+@pytest.mark.asyncio
 async def test_runtime_keeps_cached_repos_on_transient_git_poll_failure():
     from server_monitor.dashboard.runtime import DashboardRuntime
     from server_monitor.dashboard.ws_hub import WebSocketHub

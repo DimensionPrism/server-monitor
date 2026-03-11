@@ -19,6 +19,8 @@ Local dashboard for monitoring remote GPU servers over SSH aliases in a single b
   - `fetch --prune --tags`
   - `pull --ff-only`
   - `checkout <branch>` (validated branch names only)
+- Git repo card action:
+  - `Open in Terminal` (opens a local terminal into the selected remote repo via SSH)
 - Interactive settings UI:
   - create/edit/delete servers
   - create/edit/delete working directories

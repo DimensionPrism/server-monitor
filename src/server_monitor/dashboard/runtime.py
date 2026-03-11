@@ -14,6 +14,7 @@ from server_monitor.agent.parsers.gpu import parse_gpu_snapshot
 from server_monitor.agent.parsers.system import parse_system_snapshot
 from server_monitor.dashboard.normalize import normalize_server_payload
 from server_monitor.dashboard.settings import DashboardSettingsStore, ServerSettings
+from server_monitor.dashboard.terminal_launcher import open_terminal_with_ssh
 from server_monitor.dashboard.ws_hub import WebSocketHub
 
 
@@ -51,11 +52,13 @@ class DashboardRuntime:
         hub: WebSocketHub,
         settings_store: DashboardSettingsStore,
         executor,
+        terminal_launcher=open_terminal_with_ssh,
         stale_after_seconds: float = 15.0,
     ) -> None:
         self.hub = hub
         self.settings_store = settings_store
         self.executor = executor
+        self.terminal_launcher = terminal_launcher
         self.stale_after_seconds = stale_after_seconds
         self._task: asyncio.Task | None = None
         self._stop_event = asyncio.Event()
@@ -541,6 +544,19 @@ class DashboardRuntime:
             "stderr": stderr_blob,
             "exit_code": operation_result.exit_code,
             "repo": repo,
+        }
+
+    async def open_repo_terminal(self, *, server_id: str, repo_path: str) -> dict:
+        settings = self.settings_store.load()
+        server = _find_server(settings.servers, server_id)
+        if repo_path not in server.working_dirs:
+            raise ValueError(f"repo '{repo_path}' is not configured for server '{server_id}'")
+
+        launched = self.terminal_launcher(ssh_alias=server.ssh_alias, repo_path=repo_path)
+        return {
+            "ok": bool(getattr(launched, "ok", False)),
+            "launched_with": str(getattr(launched, "launched_with", "")),
+            "detail": str(getattr(launched, "detail", "")),
         }
 
     async def _run_executor(self, alias: str, remote_command: str, *, timeout_seconds: float):

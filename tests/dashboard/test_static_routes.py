@@ -206,3 +206,17 @@ def test_app_js_wires_clash_ui_tunnel_open_action():
     assert "/clash/tunnel/open" in response.text
     assert "auto_login_url" in response.text
     assert "IP Location" in response.text
+
+
+def test_app_js_wires_git_open_terminal_action():
+    from server_monitor.dashboard.api import create_dashboard_app
+    from server_monitor.dashboard.ws_hub import WebSocketHub
+
+    app = create_dashboard_app(ws_hub=WebSocketHub())
+    client = TestClient(app)
+
+    response = client.get("/static/app.js")
+
+    assert response.status_code == 200
+    assert "data-git-open-terminal" in response.text
+    assert "/git/open-terminal" in response.text
