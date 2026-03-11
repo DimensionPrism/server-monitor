@@ -2,6 +2,7 @@ const state = {
   updates: new Map(),
   settings: null,
   selectedSettingsServerId: null,
+  settingsDrafts: new Map(),
   gitOps: new Map(),
   panelOpenState: new Map(),
   clashSecrets: new Map(),
@@ -142,6 +143,16 @@ function summarizeFreshness(freshnessMap) {
   return { state: "live", reason: "all_live" };
 }
 
+function pickFreshnessForEnabledPanels(freshnessMap, panels) {
+  const enabledFreshness = {};
+  for (const panelName of panels || []) {
+    if (freshnessMap && freshnessMap[panelName]) {
+      enabledFreshness[panelName] = freshnessMap[panelName];
+    }
+  }
+  return enabledFreshness;
+}
+
 function renderSummaryMetric(label, value, meta) {
   return `
     <div class="summary-metric">
@@ -152,20 +163,32 @@ function renderSummaryMetric(label, value, meta) {
   `;
 }
 
-function renderServerSummary(update, snapshot, freshness) {
+function renderServerSummary(snapshot, panels) {
+  const metrics = [];
+  if (panels.has("system")) {
+    metrics.push(renderSummaryMetric("CPU", formatPercent(snapshot.cpu_percent), "Host load"));
+    metrics.push(renderSummaryMetric("Memory", formatPercent(snapshot.memory_percent), "RAM used"));
+    metrics.push(renderSummaryMetric("Disk", formatPercent(snapshot.disk_percent), "Disk used"));
+  }
+
   const gpus = Array.isArray(snapshot.gpus) ? snapshot.gpus : [];
-  const gpuPeak = gpus.reduce((maxValue, gpu) => {
-    const utilization = gpu.utilization_gpu_percent ?? gpu.utilization_gpu;
-    return Math.max(maxValue, clampPercent(utilization));
-  }, 0);
-  const gpuValue = gpus.length > 0 ? `${Math.round(gpuPeak)}%` : "--";
-  const gpuMeta = gpus.length > 0 ? `${gpus.length} GPUs` : "No GPU data";
+  if (panels.has("gpu")) {
+    const gpuPeak = gpus.reduce((maxValue, gpu) => {
+      const utilization = gpu.utilization_gpu_percent ?? gpu.utilization_gpu;
+      return Math.max(maxValue, clampPercent(utilization));
+    }, 0);
+    const gpuValue = gpus.length > 0 ? `${Math.round(gpuPeak)}%` : "--";
+    const gpuMeta = gpus.length > 0 ? `${gpus.length} GPUs` : "No GPU data";
+    metrics.push(renderSummaryMetric("GPU", gpuValue, gpuMeta));
+  }
+
+  if (metrics.length === 0) {
+    return "";
+  }
+
   return `
     <section class="server-summary-rail">
-      ${renderSummaryMetric("CPU", formatPercent(snapshot.cpu_percent), "Host load")}
-      ${renderSummaryMetric("Memory", formatPercent(snapshot.memory_percent), "RAM used")}
-      ${renderSummaryMetric("Disk", formatPercent(snapshot.disk_percent), "Disk used")}
-      ${renderSummaryMetric("GPU", gpuValue, gpuMeta)}
+      ${metrics.join("")}
     </section>
   `;
 }
@@ -321,7 +344,7 @@ function renderMonitor() {
     const panels = new Set(update.enabled_panels || ["system", "gpu", "git", "clash"]);
     const freshness = update.freshness || {};
     const snapshot = update.snapshot || {};
-    const cardFreshness = summarizeFreshness(freshness);
+    const cardFreshness = summarizeFreshness(pickFreshnessForEnabledPanels(freshness, panels));
 
     let html = `
       <article class="card server-card" data-server-id="${escapeHtml(update.server_id)}">
@@ -329,7 +352,7 @@ function renderMonitor() {
           <h3>${escapeHtml(update.server_id)}</h3>
           ${renderFreshnessBadge(cardFreshness)}
         </header>
-        ${renderServerSummary(update, snapshot, freshness)}
+        ${renderServerSummary(snapshot, panels)}
     `;
 
     if (panels.has("system")) {
@@ -640,29 +663,92 @@ function bindPanelGroupEvents() {
   });
 }
 
+function createSettingsDraft(server) {
+  return {
+    server_id: server.server_id,
+    ssh_alias: server.ssh_alias || "",
+    working_dirs_raw: (server.working_dirs || []).join("\n"),
+    clash_api_probe_url: server.clash_api_probe_url || DEFAULT_CLASH_API_PROBE_URL,
+    clash_ui_probe_url: server.clash_ui_probe_url || DEFAULT_CLASH_UI_PROBE_URL,
+    enabled_panels: Array.isArray(server.enabled_panels) ? server.enabled_panels.slice() : [],
+  };
+}
+
+function readSettingsDraft(server) {
+  if (state.settingsDrafts.has(server.server_id)) {
+    return state.settingsDrafts.get(server.server_id);
+  }
+  const draft = createSettingsDraft(server);
+  state.settingsDrafts.set(server.server_id, draft);
+  return draft;
+}
+
+function extractServerEditorDraft(editor) {
+  if (!editor) {
+    return null;
+  }
+  const serverId = editor.getAttribute("data-server-id");
+  if (!serverId) {
+    return null;
+  }
+  const sshAliasInput = editor.querySelector('[data-field="ssh_alias"]');
+  const workingDirsInput = editor.querySelector('[data-field="working_dirs"]');
+  const clashApiInput = editor.querySelector('[data-field="clash_api_probe_url"]');
+  const clashUiInput = editor.querySelector('[data-field="clash_ui_probe_url"]');
+  const enabledPanels = Array.from(editor.querySelectorAll("input[data-panel]:checked")).map((el) => el.getAttribute("data-panel"));
+  return {
+    server_id: serverId,
+    ssh_alias: sshAliasInput ? sshAliasInput.value : "",
+    working_dirs_raw: workingDirsInput ? workingDirsInput.value : "",
+    clash_api_probe_url: clashApiInput ? clashApiInput.value : "",
+    clash_ui_probe_url: clashUiInput ? clashUiInput.value : "",
+    enabled_panels: enabledPanels,
+  };
+}
+
+function captureCurrentServerEditorDraft() {
+  const editor = document.querySelector(".server-editor[data-server-id]");
+  const draft = extractServerEditorDraft(editor);
+  if (!draft) {
+    return null;
+  }
+  state.settingsDrafts.set(draft.server_id, draft);
+  return draft;
+}
+
+function selectSettingsServer(serverId) {
+  if (!serverId || state.selectedSettingsServerId === serverId) {
+    return;
+  }
+  captureCurrentServerEditorDraft();
+  state.selectedSettingsServerId = serverId;
+  renderSettings();
+}
+
 function serverEditorTemplate(server) {
-  const panelSet = new Set(server.enabled_panels || []);
-  const dirs = (server.working_dirs || []).join("\n");
-  const clashApiProbeUrl = server.clash_api_probe_url || DEFAULT_CLASH_API_PROBE_URL;
-  const clashUiProbeUrl = server.clash_ui_probe_url || DEFAULT_CLASH_UI_PROBE_URL;
+  const draft = readSettingsDraft(server);
+  const panelSet = new Set(draft.enabled_panels || []);
+  const dirs = draft.working_dirs_raw || "";
+  const clashApiProbeUrl = draft.clash_api_probe_url ?? DEFAULT_CLASH_API_PROBE_URL;
+  const clashUiProbeUrl = draft.clash_ui_probe_url ?? DEFAULT_CLASH_UI_PROBE_URL;
   return `
-    <div class="server-editor" data-server-id="${server.server_id}">
-      <h3>${server.server_id}</h3>
+    <div class="server-editor" data-server-id="${escapeHtml(server.server_id)}">
+      <h3>${escapeHtml(server.server_id)}</h3>
       <label>
         SSH Alias
-        <input data-field="ssh_alias" type="text" value="${server.ssh_alias}" />
+        <input data-field="ssh_alias" type="text" value="${escapeHtml(draft.ssh_alias || "")}" />
       </label>
       <label>
         Working Directories (one per line)
-        <textarea data-field="working_dirs" rows="4">${dirs}</textarea>
+        <textarea data-field="working_dirs" rows="4">${escapeHtml(dirs)}</textarea>
       </label>
       <label>
         Clash API Probe URL
-        <input data-field="clash_api_probe_url" type="text" value="${clashApiProbeUrl}" />
+        <input data-field="clash_api_probe_url" type="text" value="${escapeHtml(clashApiProbeUrl)}" />
       </label>
       <label>
         Clash UI Probe URL
-        <input data-field="clash_ui_probe_url" type="text" value="${clashUiProbeUrl}" />
+        <input data-field="clash_ui_probe_url" type="text" value="${escapeHtml(clashUiProbeUrl)}" />
       </label>
       <fieldset>
         <legend>Enabled Panels</legend>
@@ -707,21 +793,26 @@ function bindServerEditorEvents() {
     const statusEl = editor.querySelector('[data-role="status"]');
 
     editor.querySelector('[data-action="save"]').addEventListener("click", async () => {
-      const alias = editor.querySelector('[data-field="ssh_alias"]').value.trim();
-      const dirsRaw = editor.querySelector('[data-field="working_dirs"]').value;
-      const clashApiProbeUrl = (editor.querySelector('[data-field="clash_api_probe_url"]').value || "").trim() || DEFAULT_CLASH_API_PROBE_URL;
-      const clashUiProbeUrl = (editor.querySelector('[data-field="clash_ui_probe_url"]').value || "").trim() || DEFAULT_CLASH_UI_PROBE_URL;
-      const enabledPanels = Array.from(editor.querySelectorAll("input[data-panel]:checked")).map((el) => el.getAttribute("data-panel"));
-      const workingDirs = toLines(dirsRaw);
+      const draft = extractServerEditorDraft(editor);
+      if (!draft) {
+        statusEl.textContent = "Save failed: missing editor state";
+        return;
+      }
+      state.settingsDrafts.set(serverId, draft);
+      const alias = (draft.ssh_alias || "").trim();
+      const workingDirs = toLines(draft.working_dirs_raw || "");
+      const clashApiProbeUrl = (draft.clash_api_probe_url || "").trim() || DEFAULT_CLASH_API_PROBE_URL;
+      const clashUiProbeUrl = (draft.clash_ui_probe_url || "").trim() || DEFAULT_CLASH_UI_PROBE_URL;
       try {
         await api("PUT", `/api/servers/${serverId}`, {
           server_id: serverId,
           ssh_alias: alias,
           working_dirs: workingDirs,
-          enabled_panels: enabledPanels,
+          enabled_panels: draft.enabled_panels,
           clash_api_probe_url: clashApiProbeUrl,
           clash_ui_probe_url: clashUiProbeUrl,
         });
+        state.settingsDrafts.delete(serverId);
         statusEl.textContent = "Saved";
         await loadSettings();
       } catch (err) {
@@ -732,6 +823,7 @@ function bindServerEditorEvents() {
     editor.querySelector('[data-action="delete"]').addEventListener("click", async () => {
       try {
         await api("DELETE", `/api/servers/${serverId}`);
+        state.settingsDrafts.delete(serverId);
         if (state.selectedSettingsServerId === serverId) {
           state.selectedSettingsServerId = null;
         }
@@ -755,8 +847,7 @@ function bindSettingsOverviewEvents() {
       if (!serverId) {
         return;
       }
-      state.selectedSettingsServerId = serverId;
-      renderSettings();
+      selectSettingsServer(serverId);
     });
   });
 }
