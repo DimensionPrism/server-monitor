@@ -13,6 +13,7 @@ from server_monitor.dashboard.command_policy import (
     CommandHealthRecord,
     CommandKind,
     CommandPolicy,
+    FailureTracker,
     classify_failure,
     default_command_policies,
 )
@@ -38,6 +39,7 @@ DEFAULT_CLASH = {
 GIT_OPERATION_TIMEOUT_SECONDS = 20.0
 STATUS_COMMAND_TIMEOUT_SECONDS = 3.0
 STATUS_POLL_INLINE_BUDGET_SECONDS = 0.05
+COMMAND_HEALTH_HISTORY_LIMIT = 20
 
 
 @dataclass(slots=True)
@@ -47,6 +49,16 @@ class _PolicyExecutionOutcome:
     failure_class: str
     attempt_count: int
     message: str
+    had_host_unreachable: bool = False
+    host_unreachable_message: str = ""
+
+
+@dataclass(slots=True)
+class _SkippedCommandResult:
+    stdout: str = ""
+    stderr: str = ""
+    exit_code: int = -1
+    error: str | None = "cooldown_skip"
 
 
 class SshCommandExecutor:
@@ -98,6 +110,7 @@ class DashboardRuntime:
         self._status_poll_tasks: dict[str, asyncio.Task] = {}
         self._command_policies = default_command_policies()
         self._recent_command_health: dict[tuple[str, str, str], list[CommandHealthRecord]] = {}
+        self._failure_trackers: dict[tuple[str, str, str], FailureTracker] = {}
 
     async def start(self) -> None:
         if self._task is not None:
@@ -221,15 +234,21 @@ class DashboardRuntime:
                 self._system_last_updated_at[server.server_id] = system_updated_at
                 self._system_last_poll_ok[server.server_id] = True
                 snapshot["metadata"]["system_last_updated_at"] = system_updated_at
+                if system_execution.had_host_unreachable:
+                    snapshot["metadata"]["ssh_error"] = system_execution.host_unreachable_message or "timeout"
+                    host_unreachable = True
             elif system_execution.failure_class == "parse_error":
                 self._system_last_poll_ok[server.server_id] = False
                 snapshot["metadata"]["metrics_error"] = f"system parse failed: {system_execution.message}"
+                if system_execution.had_host_unreachable:
+                    snapshot["metadata"]["ssh_error"] = system_execution.host_unreachable_message or "timeout"
+                    host_unreachable = True
             else:
                 error_text = system_execution.message or "system failed"
                 self._system_last_poll_ok[server.server_id] = False
                 snapshot["metadata"]["metrics_error"] = error_text
-                if _is_ssh_unreachable(system_execution.result):
-                    snapshot["metadata"]["ssh_error"] = error_text
+                if system_execution.had_host_unreachable or _is_ssh_unreachable(system_execution.result):
+                    snapshot["metadata"]["ssh_error"] = system_execution.host_unreachable_message or error_text
                     host_unreachable = True
 
         if "gpu" in metric_results:
@@ -242,15 +261,21 @@ class DashboardRuntime:
                 self._gpu_last_updated_at[server.server_id] = gpu_updated_at
                 self._gpu_last_poll_ok[server.server_id] = True
                 snapshot["metadata"]["gpu_last_updated_at"] = gpu_updated_at
+                if gpu_execution.had_host_unreachable:
+                    snapshot["metadata"]["ssh_error"] = gpu_execution.host_unreachable_message or "timeout"
+                    host_unreachable = True
             elif gpu_execution.failure_class == "parse_error":
                 self._gpu_last_poll_ok[server.server_id] = False
                 snapshot["metadata"]["gpu_error"] = f"gpu parse failed: {gpu_execution.message}"
+                if gpu_execution.had_host_unreachable:
+                    snapshot["metadata"]["ssh_error"] = gpu_execution.host_unreachable_message or "timeout"
+                    host_unreachable = True
             else:
                 error_text = gpu_execution.message or "gpu failed"
                 self._gpu_last_poll_ok[server.server_id] = False
                 snapshot["metadata"]["gpu_error"] = error_text
-                if _is_ssh_unreachable(gpu_execution.result):
-                    snapshot["metadata"]["ssh_error"] = error_text
+                if gpu_execution.had_host_unreachable or _is_ssh_unreachable(gpu_execution.result):
+                    snapshot["metadata"]["ssh_error"] = gpu_execution.host_unreachable_message or error_text
                     host_unreachable = True
 
         should_poll_status = _needs_status_poll(
@@ -401,34 +426,42 @@ class DashboardRuntime:
             )
 
         if "clash" in enabled:
-            secret_result = await self._run_executor(
-                server.ssh_alias,
-                _clash_secret_command(),
-                timeout_seconds=STATUS_COMMAND_TIMEOUT_SECONDS,
+            secret_execution = await self._execute_with_policy(
+                server_id=server.server_id,
+                ssh_alias=server.ssh_alias,
+                command_kind=CommandKind.CLASH_SECRET,
+                target_label="server",
+                remote_command=_clash_secret_command(),
+                policy=self._command_policies[CommandKind.CLASH_SECRET],
+                parse_output=_parse_required_clash_secret,
+                cache_used=server.server_id in self._clash_cache,
             )
-            if secret_result.exit_code == 0 and not secret_result.error:
-                secret = _extract_clash_secret(secret_result.stdout)
-                if secret:
-                    status_tasks["clash"] = asyncio.create_task(
-                        self._run_executor(
-                            server.ssh_alias,
-                            _clash_command(
-                                api_probe_url=server.clash_api_probe_url,
-                                ui_probe_url=server.clash_ui_probe_url,
-                                secret=secret,
-                            ),
-                            timeout_seconds=STATUS_COMMAND_TIMEOUT_SECONDS,
-                        )
+            if secret_execution.failure_class == "ok":
+                status_tasks["clash"] = asyncio.create_task(
+                    self._execute_with_policy(
+                        server_id=server.server_id,
+                        ssh_alias=server.ssh_alias,
+                        command_kind=CommandKind.CLASH_PROBE,
+                        target_label="server",
+                        remote_command=_clash_command(
+                            api_probe_url=server.clash_api_probe_url,
+                            ui_probe_url=server.clash_ui_probe_url,
+                            secret=secret_execution.parsed,
+                        ),
+                        policy=self._command_policies[CommandKind.CLASH_PROBE],
+                        parse_output=parse_clash_status,
+                        cache_used=server.server_id in self._clash_cache,
                     )
-                else:
-                    clash = dict(self._clash_cache.get(server.server_id, DEFAULT_CLASH))
-                    clash["api_reachable"] = False
-                    clash["ui_reachable"] = False
-                    clash["message"] = "secret-unavailable"
-                    clash["last_updated_at"] = polled_at_iso
-                    self._clash_cache[server.server_id] = clash
-                    self._clash_last_updated_at[server.server_id] = polled_at_iso
-                    self._clash_last_poll_ok[server.server_id] = False
+                )
+            elif secret_execution.failure_class == "parse_error" and secret_execution.message == "secret-unavailable":
+                clash = dict(self._clash_cache.get(server.server_id, DEFAULT_CLASH))
+                clash["api_reachable"] = False
+                clash["ui_reachable"] = False
+                clash["message"] = "secret-unavailable"
+                clash["last_updated_at"] = polled_at_iso
+                self._clash_cache[server.server_id] = clash
+                self._clash_last_updated_at[server.server_id] = polled_at_iso
+                self._clash_last_poll_ok[server.server_id] = False
             else:
                 # Transient secret command failures should not overwrite last good clash snapshot.
                 self._clash_last_poll_ok[server.server_id] = False
@@ -453,11 +486,11 @@ class DashboardRuntime:
                     self._git_last_updated_at[server.server_id] = polled_at_iso
 
         if "clash" in status_results:
-            clash_result = status_results["clash"]
-            if isinstance(clash_result, Exception):
+            clash_execution = status_results["clash"]
+            if isinstance(clash_execution, Exception):
                 self._clash_last_poll_ok[server.server_id] = False
-            elif clash_result.exit_code == 0 and not clash_result.error:
-                clash = parse_clash_status(clash_result.stdout)
+            elif clash_execution.failure_class == "ok":
+                clash = clash_execution.parsed
                 clash["last_updated_at"] = polled_at_iso
                 self._clash_cache[server.server_id] = clash
                 self._clash_last_updated_at[server.server_id] = polled_at_iso
@@ -512,18 +545,23 @@ class DashboardRuntime:
         polled_at_iso: str,
     ) -> tuple[str, dict | None, bool]:
         command = _git_status_command(repo_path)
-        result = await self._run_executor(
-            server.ssh_alias,
-            command,
-            timeout_seconds=STATUS_COMMAND_TIMEOUT_SECONDS,
+        execution = await self._execute_with_policy(
+            server_id=server.server_id,
+            ssh_alias=server.ssh_alias,
+            command_kind=CommandKind.GIT_STATUS,
+            target_label=repo_path,
+            remote_command=command,
+            policy=self._command_policies[CommandKind.GIT_STATUS],
+            parse_output=lambda stdout: parse_repo_status(
+                path=repo_path,
+                porcelain_text=stdout,
+                last_commit_age_seconds=0,
+            ),
+            cache_used=previous_repo is not None,
         )
-        if result.exit_code != 0 or result.error:
+        if execution.failure_class != "ok":
             return repo_path, previous_repo, False
-        repo = parse_repo_status(
-            path=repo_path,
-            porcelain_text=result.stdout,
-            last_commit_age_seconds=0,
-        )
+        repo = execution.parsed
         repo["last_updated_at"] = polled_at_iso
         return (repo_path, repo, True)
 
@@ -619,6 +657,42 @@ class DashboardRuntime:
         cache_used: bool,
     ) -> _PolicyExecutionOutcome:
         attempt_durations_ms: list[int] = []
+        had_host_unreachable = False
+        host_unreachable_message = ""
+        tracker = self._failure_tracker_for(
+            server_id=server_id,
+            command_kind=command_kind,
+            target_label=target_label,
+            policy=policy,
+        )
+        if tracker.in_cooldown(now=time.monotonic()):
+            skipped_result = _SkippedCommandResult()
+            self._append_command_health(
+                CommandHealthRecord(
+                    recorded_at=datetime.now(UTC).isoformat(),
+                    server_id=server_id,
+                    command_kind=command_kind,
+                    target_label=target_label,
+                    ok=False,
+                    failure_class="cooldown_skip",
+                    attempt_count=0,
+                    duration_ms=0,
+                    attempt_durations_ms=[],
+                    exit_code=skipped_result.exit_code,
+                    cooldown_applied=True,
+                    cache_used=cache_used,
+                    message="cooldown active",
+                )
+            )
+            return _PolicyExecutionOutcome(
+                result=skipped_result,
+                parsed=None,
+                failure_class="cooldown_skip",
+                attempt_count=0,
+                message="cooldown active",
+                had_host_unreachable=False,
+                host_unreachable_message="",
+            )
 
         for attempt in range(1, policy.max_attempts + 1):
             started_at = time.monotonic()
@@ -637,6 +711,7 @@ class DashboardRuntime:
                         parsed = parse_output(result.stdout)
                     except Exception as exc:
                         message = str(exc)
+                        cooldown_applied = tracker.record_failure(now=time.monotonic())
                         self._append_command_health(
                             CommandHealthRecord(
                                 recorded_at=datetime.now(UTC).isoformat(),
@@ -649,7 +724,7 @@ class DashboardRuntime:
                                 duration_ms=sum(attempt_durations_ms),
                                 attempt_durations_ms=list(attempt_durations_ms),
                                 exit_code=int(getattr(result, "exit_code", -1)),
-                                cooldown_applied=False,
+                                cooldown_applied=cooldown_applied,
                                 cache_used=cache_used,
                                 message=message,
                             )
@@ -660,10 +735,13 @@ class DashboardRuntime:
                             failure_class="parse_error",
                             attempt_count=attempt,
                             message=message,
+                            had_host_unreachable=had_host_unreachable,
+                            host_unreachable_message=host_unreachable_message,
                         )
                 else:
                     parsed = None
 
+                tracker.record_success()
                 self._append_command_health(
                     CommandHealthRecord(
                         recorded_at=datetime.now(UTC).isoformat(),
@@ -687,6 +765,8 @@ class DashboardRuntime:
                     failure_class="ok",
                     attempt_count=attempt,
                     message="",
+                    had_host_unreachable=had_host_unreachable,
+                    host_unreachable_message=host_unreachable_message,
                 )
 
             failure_class = classify_failure(
@@ -694,10 +774,15 @@ class DashboardRuntime:
                 stderr=str(getattr(result, "stderr", "")),
             )
             message = str(getattr(result, "error", "") or getattr(result, "stderr", "") or command_kind.value)
+            if _is_ssh_unreachable(result):
+                had_host_unreachable = True
+                if not host_unreachable_message:
+                    host_unreachable_message = message
             if attempt < policy.max_attempts and _should_retry(policy=policy, failure_class=failure_class):
                 await asyncio.sleep(policy.base_backoff_seconds * attempt)
                 continue
 
+            cooldown_applied = tracker.record_failure(now=time.monotonic())
             self._append_command_health(
                 CommandHealthRecord(
                     recorded_at=datetime.now(UTC).isoformat(),
@@ -710,7 +795,7 @@ class DashboardRuntime:
                     duration_ms=sum(attempt_durations_ms),
                     attempt_durations_ms=list(attempt_durations_ms),
                     exit_code=int(getattr(result, "exit_code", -1)),
-                    cooldown_applied=False,
+                    cooldown_applied=cooldown_applied,
                     cache_used=cache_used,
                     message=message,
                 )
@@ -721,6 +806,8 @@ class DashboardRuntime:
                 failure_class=failure_class,
                 attempt_count=attempt,
                 message=message,
+                had_host_unreachable=had_host_unreachable,
+                host_unreachable_message=host_unreachable_message,
             )
 
         raise RuntimeError("policy execution exited without result")
@@ -729,6 +816,26 @@ class DashboardRuntime:
         key = (record.server_id, record.command_kind.value, record.target_label)
         history = self._recent_command_health.setdefault(key, [])
         history.append(record)
+        if len(history) > COMMAND_HEALTH_HISTORY_LIMIT:
+            history.pop(0)
+
+    def _failure_tracker_for(
+        self,
+        *,
+        server_id: str,
+        command_kind: CommandKind,
+        target_label: str,
+        policy: CommandPolicy,
+    ) -> FailureTracker:
+        key = (server_id, command_kind.value, target_label)
+        tracker = self._failure_trackers.get(key)
+        if tracker is None:
+            tracker = FailureTracker(
+                cooldown_after_failures=policy.cooldown_after_failures,
+                cooldown_seconds=policy.cooldown_seconds,
+            )
+            self._failure_trackers[key] = tracker
+        return tracker
 
     def get_recent_command_health(
         self,
@@ -956,6 +1063,13 @@ def _extract_clash_secret(output: str) -> str | None:
                 if secret:
                     return secret
     return None
+
+
+def _parse_required_clash_secret(output: str) -> str:
+    secret = _extract_clash_secret(output)
+    if secret:
+        return secret
+    raise ValueError("secret-unavailable")
 
 
 def _clash_secret_command() -> str:

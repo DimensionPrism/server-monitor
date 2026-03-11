@@ -285,6 +285,32 @@ class _SystemParseFailureExecutor:
         return _Result("")
 
 
+class _AlwaysTimeoutClashSecretExecutor:
+    def __init__(self):
+        self.calls = []
+
+    async def run(self, alias: str, remote_command: str, timeout_seconds: float | None = None):
+        self.calls.append((alias, remote_command, timeout_seconds))
+        if "clashsecret" in remote_command:
+            return _Result("", stderr="timeout", exit_code=-1, error="timeout")
+        return _Result("")
+
+
+class _GitStatusCooldownExecutor:
+    def __init__(self):
+        self.calls = []
+        self._git_status_calls = 0
+
+    async def run(self, alias: str, remote_command: str, timeout_seconds: float | None = None):
+        self.calls.append((alias, remote_command, timeout_seconds))
+        if "git -C" in remote_command:
+            self._git_status_calls += 1
+            if self._git_status_calls == 1:
+                return _Result("## main...origin/main\n M README.md\n")
+            return _Result("", stderr="timeout", exit_code=-1, error="timeout")
+        return _Result("")
+
+
 def test_ssh_command_executor_uses_dashboard_command_runner():
     from server_monitor.dashboard.command_runner import CommandRunner
     from server_monitor.dashboard.runtime import SshCommandExecutor
@@ -393,7 +419,7 @@ async def test_runtime_short_circuits_when_ssh_unreachable():
 
     await runtime.poll_once()
 
-    assert len(executor.calls) <= 2
+    assert len(executor.calls) <= 3
     assert not any("git -C" in call[1] for call in executor.calls)
     assert not any("pgrep -f clash" in call[1] for call in executor.calls)
     assert ws.messages[0]["snapshot"]["metadata"]["ssh_error"] != ""
@@ -789,6 +815,110 @@ async def test_runtime_does_not_retry_parse_failure():
     assert payload["snapshot"]["metadata"]["metrics_error"].startswith("system parse failed:")
     assert health["attempt_count"] == 1
     assert health["failure_class"] == "parse_error"
+
+
+@pytest.mark.asyncio
+async def test_runtime_applies_cooldown_after_repeated_clash_secret_failures():
+    from server_monitor.dashboard.command_policy import CommandKind, CommandPolicy
+    from server_monitor.dashboard.runtime import DashboardRuntime
+    from server_monitor.dashboard.ws_hub import WebSocketHub
+
+    settings = DashboardSettings(
+        metrics_interval_seconds=1.0,
+        status_interval_seconds=0.0,
+        servers=[
+            ServerSettings(
+                server_id="server-clash-cooldown",
+                ssh_alias="srv-clash-cooldown",
+                working_dirs=[],
+                enabled_panels=["clash"],
+            )
+        ],
+    )
+
+    hub = WebSocketHub()
+    ws = _FakeWebSocket()
+    await hub.connect(ws)
+    executor = _AlwaysTimeoutClashSecretExecutor()
+    runtime = DashboardRuntime(
+        hub=hub,
+        settings_store=_FakeSettingsStore(settings),
+        executor=executor,
+    )
+    runtime._command_policies[CommandKind.CLASH_SECRET] = CommandPolicy(
+        timeout_seconds=3.0,
+        max_attempts=1,
+        base_backoff_seconds=0.0,
+        retry_on_timeout=True,
+        retry_on_ssh_error=True,
+        retry_on_nonzero_exit=False,
+        cooldown_after_failures=2,
+        cooldown_seconds=60.0,
+    )
+
+    await runtime.poll_once()
+    await runtime.poll_once()
+    await runtime.poll_once()
+
+    health = runtime.get_recent_command_health(
+        server_id="server-clash-cooldown",
+        command_kind="clash_secret",
+        target_label="server",
+    )
+    assert health[-1]["failure_class"] == "cooldown_skip"
+
+
+@pytest.mark.asyncio
+async def test_runtime_keeps_cached_git_repo_during_cooldown():
+    from server_monitor.dashboard.command_policy import CommandKind, CommandPolicy
+    from server_monitor.dashboard.runtime import DashboardRuntime
+    from server_monitor.dashboard.ws_hub import WebSocketHub
+
+    settings = DashboardSettings(
+        metrics_interval_seconds=1.0,
+        status_interval_seconds=0.0,
+        servers=[
+            ServerSettings(
+                server_id="server-git-cooldown",
+                ssh_alias="srv-git-cooldown",
+                working_dirs=["/work/repo-a"],
+                enabled_panels=["git"],
+            )
+        ],
+    )
+
+    hub = WebSocketHub()
+    ws = _FakeWebSocket()
+    await hub.connect(ws)
+    executor = _GitStatusCooldownExecutor()
+    runtime = DashboardRuntime(
+        hub=hub,
+        settings_store=_FakeSettingsStore(settings),
+        executor=executor,
+    )
+    runtime._command_policies[CommandKind.GIT_STATUS] = CommandPolicy(
+        timeout_seconds=3.0,
+        max_attempts=1,
+        base_backoff_seconds=0.0,
+        retry_on_timeout=True,
+        retry_on_ssh_error=True,
+        retry_on_nonzero_exit=False,
+        cooldown_after_failures=1,
+        cooldown_seconds=60.0,
+    )
+
+    await runtime.poll_once()
+    await runtime.poll_once()
+    await runtime.poll_once()
+
+    payload = ws.messages[-1]
+    health = runtime.get_recent_command_health(
+        server_id="server-git-cooldown",
+        command_kind="git_status",
+        target_label="/work/repo-a",
+    )
+    assert payload["repos"][0]["path"] == "/work/repo-a"
+    assert health[-1]["failure_class"] == "cooldown_skip"
 
 
 def test_metrics_sleep_seconds_compensates_poll_time():
