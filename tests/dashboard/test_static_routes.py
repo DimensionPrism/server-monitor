@@ -176,6 +176,35 @@ def test_styles_css_has_server_board_and_gpu_autofit_grid_rules():
     assert "grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));" in response.text
 
 
+def test_styles_css_exposes_summary_and_settings_visual_tokens():
+    from server_monitor.dashboard.api import create_dashboard_app
+    from server_monitor.dashboard.ws_hub import WebSocketHub
+
+    app = create_dashboard_app(ws_hub=WebSocketHub())
+    client = TestClient(app)
+
+    response = client.get("/static/styles.css")
+
+    assert response.status_code == 200
+    assert "--surface-0" in response.text
+    assert ".server-summary-rail" in response.text
+    assert ".settings-overview-row" in response.text
+
+
+def test_styles_css_has_gpu_tile_and_editor_panel_rules():
+    from server_monitor.dashboard.api import create_dashboard_app
+    from server_monitor.dashboard.ws_hub import WebSocketHub
+
+    app = create_dashboard_app(ws_hub=WebSocketHub())
+    client = TestClient(app)
+
+    response = client.get("/static/styles.css")
+
+    assert response.status_code == 200
+    assert ".gpu-card" in response.text
+    assert ".settings-editor-panel" in response.text
+
+
 def test_app_js_persists_panel_open_state_on_rerender():
     from server_monitor.dashboard.api import create_dashboard_app
     from server_monitor.dashboard.ws_hub import WebSocketHub
