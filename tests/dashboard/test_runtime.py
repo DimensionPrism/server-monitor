@@ -253,7 +253,8 @@ class _ClashLocationExecutor:
                 "api_reachable=true\n"
                 "ui_reachable=true\n"
                 "message=ok\n"
-                "ip_location=Los Angeles, California, United States (1.2.3.4)"
+                "ip_location=Los Angeles, California, United States (1.2.3.4)\n"
+                "controller_port=7373"
             )
         return _Result("")
 
@@ -941,6 +942,7 @@ def test_clash_command_includes_bearer_header_for_api_and_ui():
     assert "127.0.0.1:9090/ui" in cmd
     assert "-lt 400" in cmd
     assert "ip_location=" in cmd
+    assert "controller_port=" in cmd
 
 
 @pytest.mark.asyncio
@@ -1115,5 +1117,6 @@ async def test_runtime_clash_payload_contains_ip_location():
 
     payload = ws.messages[0]
     assert payload["clash"]["ip_location"] == "Los Angeles, California, United States (1.2.3.4)"
+    assert payload["clash"]["controller_port"] == "7373"
     assert payload["clash"]["message"] == "ok"
     await runtime.stop()

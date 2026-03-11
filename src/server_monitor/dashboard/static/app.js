@@ -4,6 +4,7 @@ const state = {
   gitOps: new Map(),
   panelOpenState: new Map(),
   clashSecrets: new Map(),
+  clashTunnelPorts: new Map(),
 };
 
 const DEFAULT_CLASH_API_PROBE_URL = "http://127.0.0.1:9090/version";
@@ -187,6 +188,8 @@ function renderClashPanel(serverId, clash) {
   const running = clash && clash.running ? "running" : "stopped";
   const message = clash && clash.message ? clash.message : "--";
   const ipLocation = clash && clash.ip_location ? clash.ip_location : "--";
+  const controllerPort = clash && clash.controller_port ? clash.controller_port : "--";
+  const tunnelPort = state.clashTunnelPorts.get(serverId) || "--";
   const secret = state.clashSecrets.get(serverId) || "";
   const maskedSecret = secret ? `${"*".repeat(Math.max(0, secret.length - 4))}${secret.slice(-4)}` : "--";
   return `
@@ -195,6 +198,8 @@ function renderClashPanel(serverId, clash) {
     <div class="kv"><span>UI</span><strong>${clash && clash.ui_reachable ? "reachable" : "unreachable"}</strong></div>
     <div class="kv"><span>Message</span><strong>${escapeHtml(message)}</strong></div>
     <div class="kv"><span>IP Location</span><strong>${escapeHtml(ipLocation)}</strong></div>
+    <div class="kv"><span>Controller Port</span><strong>${escapeHtml(controllerPort)}</strong></div>
+    <div class="kv"><span>Tunnel Port</span><strong>${escapeHtml(String(tunnelPort))}</strong></div>
     <div class="kv"><span>Secret</span><strong>${escapeHtml(maskedSecret)}</strong></div>
     <div class="clash-actions">
       <button class="btn-pill" type="button" data-clash-open-ui>Open UI Tunnel</button>
@@ -436,6 +441,10 @@ async function openClashUiTunnel(serverId, statusEl) {
     const secret = response && typeof response.secret === "string" ? response.secret : "";
     if (secret) {
       state.clashSecrets.set(serverId, secret);
+    }
+    const localPort = response && Number.isFinite(Number(response.local_port)) ? Number(response.local_port) : null;
+    if (localPort !== null) {
+      state.clashTunnelPorts.set(serverId, localPort);
     }
 
     let statusMessage = response && response.reused ? "Tunnel reused" : "Tunnel opened";

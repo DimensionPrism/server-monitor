@@ -50,6 +50,7 @@ class ClashStatus(BaseModel):
     ui_reachable: bool
     message: str = ""
     ip_location: str = ""
+    controller_port: str = ""
 
 
 class ServerSnapshot(BaseModel):

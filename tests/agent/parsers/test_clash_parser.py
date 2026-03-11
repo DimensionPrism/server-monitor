@@ -28,3 +28,17 @@ def test_parse_clash_status_reads_ip_location_when_present():
     )
 
     assert parsed["ip_location"] == "Los Angeles, California, United States (1.2.3.4)"
+
+
+def test_parse_clash_status_reads_controller_port_when_present():
+    from server_monitor.agent.parsers.clash import parse_clash_status
+
+    parsed = parse_clash_status(
+        "running=true\n"
+        "api_reachable=true\n"
+        "ui_reachable=true\n"
+        "message=ok\n"
+        "controller_port=7373\n"
+    )
+
+    assert parsed["controller_port"] == "7373"

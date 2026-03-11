@@ -24,6 +24,7 @@ DEFAULT_CLASH = {
     "ui_reachable": False,
     "message": "not-collected",
     "ip_location": "",
+    "controller_port": "",
 }
 GIT_OPERATION_TIMEOUT_SECONDS = 20.0
 STATUS_COMMAND_TIMEOUT_SECONDS = 3.0
@@ -826,4 +827,18 @@ def _clash_command(
         "echo message=curl-missing; "
         "echo ip_location=unknown; "
         "fi"
+        "; CTRL_PORT=unknown; "
+        "for CANDIDATE in "
+        "$HOME/clashctl/resources/runtime.yaml "
+        "$HOME/clash-for-linux-install/resources/runtime.yaml "
+        "; do "
+        "if [ -r \"$CANDIDATE\" ]; then "
+        "CTRL_LINE=$(grep -m1 '^external-controller:' \"$CANDIDATE\" | cut -d: -f2- | tr -d '\"' | tr -d \"'\" | tr -d '\\r' | xargs); "
+        "if [ -n \"$CTRL_LINE\" ]; then "
+        "CTRL_PORT=$(printf '%s' \"$CTRL_LINE\" | awk -F: '{print $NF}' | tr -d '\\r' | xargs); "
+        "if [ -n \"$CTRL_PORT\" ]; then break; fi; "
+        "fi; "
+        "fi; "
+        "done; "
+        "echo controller_port=$CTRL_PORT"
     )

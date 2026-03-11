@@ -39,8 +39,12 @@ async def test_clash_tunnel_manager_opens_tunnel_and_returns_local_url():
         spawn_calls.append(argv)
         return process
 
+    async def _probe(**_kwargs):
+        return True
+
     manager = ClashTunnelManager(
         spawn=_spawn,
+        probe_local_tunnel=_probe,
         find_free_port=lambda: 19100,
         startup_grace_seconds=0.0,
     )
@@ -69,8 +73,12 @@ async def test_clash_tunnel_manager_reuses_existing_tunnel_for_same_target():
         spawn_calls.append(argv)
         return process
 
+    async def _probe(**_kwargs):
+        return True
+
     manager = ClashTunnelManager(
         spawn=_spawn,
+        probe_local_tunnel=_probe,
         find_free_port=lambda: 19101,
         startup_grace_seconds=0.0,
     )
@@ -104,8 +112,12 @@ async def test_clash_tunnel_manager_restarts_tunnel_when_target_changes():
         spawn_calls.append(argv)
         return queue.pop(0)
 
+    async def _probe(**_kwargs):
+        return True
+
     manager = ClashTunnelManager(
         spawn=_spawn,
+        probe_local_tunnel=_probe,
         find_free_port=lambda: 19102,
         startup_grace_seconds=0.0,
     )
@@ -132,8 +144,12 @@ async def test_clash_tunnel_manager_rejects_invalid_ui_probe_url():
     async def _spawn(_argv):
         return _FakeProcess(returncode=None)
 
+    async def _probe(**_kwargs):
+        return True
+
     manager = ClashTunnelManager(
         spawn=_spawn,
+        probe_local_tunnel=_probe,
         find_free_port=lambda: 19103,
         startup_grace_seconds=0.0,
     )
@@ -153,8 +169,12 @@ async def test_clash_tunnel_manager_raises_when_ssh_process_exits_immediately():
     async def _spawn(_argv):
         return _FakeProcess(returncode=255, stderr_text="connection refused")
 
+    async def _probe(**_kwargs):
+        return True
+
     manager = ClashTunnelManager(
         spawn=_spawn,
+        probe_local_tunnel=_probe,
         find_free_port=lambda: 19104,
         startup_grace_seconds=0.0,
     )
@@ -165,3 +185,117 @@ async def test_clash_tunnel_manager_raises_when_ssh_process_exits_immediately():
             ssh_alias="srv-a",
             clash_ui_probe_url="http://127.0.0.1:9090/ui",
         )
+
+
+@pytest.mark.asyncio
+async def test_clash_tunnel_manager_restarts_when_reuse_healthcheck_fails():
+    from server_monitor.dashboard.clash_tunnel import ClashTunnelManager
+
+    spawn_calls = []
+    first_process = _FakeProcess(returncode=None)
+    second_process = _FakeProcess(returncode=None)
+    queue = [first_process, second_process]
+    probe_calls = []
+
+    async def _spawn(argv):
+        spawn_calls.append(argv)
+        return queue.pop(0)
+
+    async def _probe(**kwargs):
+        probe_calls.append(kwargs)
+        # first open succeeds; reuse check fails; replacement tunnel check succeeds
+        return len(probe_calls) in {1, 3}
+
+    manager = ClashTunnelManager(
+        spawn=_spawn,
+        probe_local_tunnel=_probe,
+        find_free_port=lambda: 19105,
+        startup_grace_seconds=0.0,
+        healthcheck_retries=1,
+    )
+
+    first = await manager.open_ui_tunnel(
+        server_id="server-a",
+        ssh_alias="srv-a",
+        clash_ui_probe_url="http://127.0.0.1:9090/ui",
+    )
+    second = await manager.open_ui_tunnel(
+        server_id="server-a",
+        ssh_alias="srv-a",
+        clash_ui_probe_url="http://127.0.0.1:9090/ui",
+    )
+
+    assert first["reused"] is False
+    assert second["reused"] is False
+    assert first_process.terminated is True
+    assert len(spawn_calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_clash_tunnel_manager_retries_spawn_when_first_probe_fails():
+    from server_monitor.dashboard.clash_tunnel import ClashTunnelManager
+
+    spawn_calls = []
+    first_process = _FakeProcess(returncode=None)
+    second_process = _FakeProcess(returncode=None)
+    queue = [first_process, second_process]
+    probe_calls = []
+
+    async def _spawn(argv):
+        spawn_calls.append(argv)
+        return queue.pop(0)
+
+    async def _probe(**kwargs):
+        probe_calls.append(kwargs)
+        return len(probe_calls) >= 2
+
+    manager = ClashTunnelManager(
+        spawn=_spawn,
+        probe_local_tunnel=_probe,
+        find_free_port=lambda: 19106,
+        startup_grace_seconds=0.0,
+        healthcheck_retries=1,
+    )
+
+    result = await manager.open_ui_tunnel(
+        server_id="server-a",
+        ssh_alias="srv-a",
+        clash_ui_probe_url="http://127.0.0.1:9090/ui",
+    )
+
+    assert result["reused"] is False
+    assert len(spawn_calls) == 2
+    assert first_process.terminated is True
+
+
+@pytest.mark.asyncio
+async def test_clash_tunnel_manager_raises_when_probe_keeps_failing():
+    from server_monitor.dashboard.clash_tunnel import ClashTunnelManager
+
+    process_one = _FakeProcess(returncode=None)
+    process_two = _FakeProcess(returncode=None)
+    queue = [process_one, process_two]
+
+    async def _spawn(_argv):
+        return queue.pop(0)
+
+    async def _probe(**_kwargs):
+        return False
+
+    manager = ClashTunnelManager(
+        spawn=_spawn,
+        probe_local_tunnel=_probe,
+        find_free_port=lambda: 19107,
+        startup_grace_seconds=0.0,
+        healthcheck_retries=1,
+    )
+
+    with pytest.raises(RuntimeError, match="local probe failed"):
+        await manager.open_ui_tunnel(
+            server_id="server-a",
+            ssh_alias="srv-a",
+            clash_ui_probe_url="http://127.0.0.1:9090/ui",
+        )
+
+    assert process_one.terminated is True
+    assert process_two.terminated is True

@@ -24,5 +24,6 @@ def parse_clash_status(text: str) -> dict[str, bool | str]:
         "ui_reachable": _parse_bool(values.get("ui_reachable", "false")),
         "message": values.get("message", ""),
         "ip_location": values.get("ip_location", ""),
+        "controller_port": values.get("controller_port", ""),
     }
 

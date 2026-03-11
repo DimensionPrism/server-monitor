@@ -47,6 +47,38 @@ async def _spawn_ssh_process(argv: list[str]) -> asyncio.subprocess.Process:
     )
 
 
+async def _default_probe_local_tunnel(
+    *,
+    bind_host: str,
+    local_port: int,
+    path_and_query: str,
+    timeout_seconds: float,
+) -> bool:
+    """Probe local forwarded endpoint and accept any HTTP response line."""
+
+    path = path_and_query if path_and_query.startswith("/") else f"/{path_and_query}"
+    request = (
+        f"GET {path} HTTP/1.1\r\n"
+        f"Host: {bind_host}:{local_port}\r\n"
+        "Connection: close\r\n"
+        "\r\n"
+    ).encode()
+    try:
+        reader, writer = await asyncio.wait_for(
+            asyncio.open_connection(bind_host, local_port),
+            timeout=timeout_seconds,
+        )
+        writer.write(request)
+        await writer.drain()
+        status_line = await asyncio.wait_for(reader.readline(), timeout=timeout_seconds)
+        writer.close()
+        with suppress(Exception):
+            await writer.wait_closed()
+        return status_line.startswith(b"HTTP/")
+    except Exception:
+        return False
+
+
 class ClashTunnelManager:
     """Open/reuse per-server SSH local forwards for Clash UI."""
 
@@ -56,14 +88,20 @@ class ClashTunnelManager:
         bind_host: str = "127.0.0.1",
         startup_grace_seconds: float = 0.1,
         connect_timeout_seconds: int = 5,
+        healthcheck_timeout_seconds: float = 1.0,
+        healthcheck_retries: int = 3,
         find_free_port=_default_find_free_port,
         spawn=_spawn_ssh_process,
+        probe_local_tunnel=_default_probe_local_tunnel,
     ) -> None:
         self.bind_host = bind_host
         self.startup_grace_seconds = startup_grace_seconds
         self.connect_timeout_seconds = int(max(1, connect_timeout_seconds))
+        self.healthcheck_timeout_seconds = float(max(0.1, healthcheck_timeout_seconds))
+        self.healthcheck_retries = int(max(1, healthcheck_retries))
         self._find_free_port = find_free_port
         self._spawn = spawn
+        self._probe_local_tunnel = probe_local_tunnel
         self._handles: dict[str, _TunnelHandle] = {}
         self._lock = asyncio.Lock()
 
@@ -72,50 +110,65 @@ class ClashTunnelManager:
         async with self._lock:
             existing = self._handles.get(server_id)
             if existing and self._is_reusable(existing, ssh_alias=ssh_alias, remote_host=remote_host, remote_port=remote_port):
-                return {
-                    "url": _build_local_url(self.bind_host, existing.local_port, existing.path_and_query),
-                    "local_port": existing.local_port,
-                    "reused": True,
-                }
+                if await self._probe_tunnel(local_port=existing.local_port, path_and_query=existing.path_and_query):
+                    return {
+                        "url": _build_local_url(self.bind_host, existing.local_port, existing.path_and_query),
+                        "local_port": existing.local_port,
+                        "reused": True,
+                    }
+                await _terminate_process(existing.process)
+                self._handles.pop(server_id, None)
 
             if existing is not None:
                 await _terminate_process(existing.process)
                 self._handles.pop(server_id, None)
 
-            local_port = int(self._find_free_port())
-            argv = [
-                "ssh",
-                "-o",
-                "ExitOnForwardFailure=yes",
-                "-o",
-                f"ConnectTimeout={self.connect_timeout_seconds}",
-                "-N",
-                "-L",
-                f"{local_port}:{remote_host}:{remote_port}",
-                ssh_alias,
-            ]
-            process = await self._spawn(argv)
+            last_failure = "ssh tunnel process exited before tunnel became available"
+            for _ in range(2):
+                local_port = int(self._find_free_port())
+                argv = [
+                    "ssh",
+                    "-o",
+                    "ExitOnForwardFailure=yes",
+                    "-o",
+                    f"ConnectTimeout={self.connect_timeout_seconds}",
+                    "-N",
+                    "-L",
+                    f"{local_port}:{remote_host}:{remote_port}",
+                    ssh_alias,
+                ]
+                process = await self._spawn(argv)
 
-            if self.startup_grace_seconds > 0:
-                await asyncio.sleep(self.startup_grace_seconds)
-            if process.returncode is not None:
-                raise RuntimeError("ssh tunnel process exited before tunnel became available")
+                if self.startup_grace_seconds > 0:
+                    await asyncio.sleep(self.startup_grace_seconds)
+                if process.returncode is not None:
+                    last_failure = "ssh tunnel process exited before tunnel became available"
+                    await _terminate_process(process)
+                    continue
 
-            handle = _TunnelHandle(
-                server_id=server_id,
-                ssh_alias=ssh_alias,
-                remote_host=remote_host,
-                remote_port=remote_port,
-                local_port=local_port,
-                path_and_query=path_and_query,
-                process=process,
-            )
-            self._handles[server_id] = handle
-            return {
-                "url": _build_local_url(self.bind_host, local_port, path_and_query),
-                "local_port": local_port,
-                "reused": False,
-            }
+                if not await self._probe_tunnel(local_port=local_port, path_and_query=path_and_query):
+                    last_failure = "ssh tunnel local probe failed"
+                    await _terminate_process(process)
+                    continue
+
+                handle = _TunnelHandle(
+                    server_id=server_id,
+                    ssh_alias=ssh_alias,
+                    remote_host=remote_host,
+                    remote_port=remote_port,
+                    local_port=local_port,
+                    path_and_query=path_and_query,
+                    process=process,
+                )
+                self._handles[server_id] = handle
+                return {
+                    "url": _build_local_url(self.bind_host, local_port, path_and_query),
+                    "local_port": local_port,
+                    "reused": False,
+                }
+
+                # unreachable
+            raise RuntimeError(last_failure)
 
     async def close_all(self) -> None:
         async with self._lock:
@@ -131,6 +184,18 @@ class ClashTunnelManager:
             and handle.remote_host == remote_host
             and handle.remote_port == remote_port
         )
+
+    async def _probe_tunnel(self, *, local_port: int, path_and_query: str) -> bool:
+        for _ in range(self.healthcheck_retries):
+            if await self._probe_local_tunnel(
+                bind_host=self.bind_host,
+                local_port=local_port,
+                path_and_query=path_and_query,
+                timeout_seconds=self.healthcheck_timeout_seconds,
+            ):
+                return True
+            await asyncio.sleep(0.05)
+        return False
 
 
 def _build_local_url(bind_host: str, local_port: int, path_and_query: str) -> str:

@@ -206,6 +206,8 @@ def test_app_js_wires_clash_ui_tunnel_open_action():
     assert "/clash/tunnel/open" in response.text
     assert "auto_login_url" in response.text
     assert "IP Location" in response.text
+    assert "Controller Port" in response.text
+    assert "Tunnel Port" in response.text
 
 
 def test_app_js_wires_git_open_terminal_action():
