@@ -241,6 +241,21 @@ def test_app_js_includes_semantic_summary_and_gpu_heat_helpers():
     assert "function getGpuHeatLevel" in response.text
 
 
+def test_styles_css_has_motion_hooks_for_premium_refinement():
+    from server_monitor.dashboard.api import create_dashboard_app
+    from server_monitor.dashboard.ws_hub import WebSocketHub
+
+    app = create_dashboard_app(ws_hub=WebSocketHub())
+    client = TestClient(app)
+
+    response = client.get("/static/styles.css")
+
+    assert response.status_code == 200
+    assert ".panel-group" in response.text
+    assert "transition: max-height" in response.text
+    assert ".settings-overview-row:active" in response.text
+
+
 def test_app_js_persists_panel_open_state_on_rerender():
     from server_monitor.dashboard.api import create_dashboard_app
     from server_monitor.dashboard.ws_hub import WebSocketHub
