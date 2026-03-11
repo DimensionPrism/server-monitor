@@ -725,7 +725,20 @@ function selectSettingsServer(serverId) {
   renderSettings();
 }
 
-function serverEditorTemplate(server) {
+function renderSettingsEditorFooter(options = {}) {
+  const dirtyState = options.dirty ? "dirty" : "clean";
+  return `
+    <footer class="settings-editor-footer" data-dirty-state="${dirtyState}">
+      <div class="settings-editor-footer-status" data-role="status"></div>
+      <div class="settings-editor-footer-actions">
+        <button class="btn-primary" data-action="save" type="button">Save</button>
+        <button class="btn-danger" data-action="delete" type="button">Delete</button>
+      </div>
+    </footer>
+  `;
+}
+
+function renderSettingsEditorCards(server) {
   const draft = readSettingsDraft(server);
   const panelSet = new Set(draft.enabled_panels || []);
   const dirs = draft.working_dirs_raw || "";
@@ -733,33 +746,60 @@ function serverEditorTemplate(server) {
   const clashUiProbeUrl = draft.clash_ui_probe_url ?? DEFAULT_CLASH_UI_PROBE_URL;
   return `
     <div class="server-editor" data-server-id="${escapeHtml(server.server_id)}">
-      <h3>${escapeHtml(server.server_id)}</h3>
-      <label>
-        SSH Alias
-        <input data-field="ssh_alias" type="text" value="${escapeHtml(draft.ssh_alias || "")}" />
-      </label>
-      <label>
-        Working Directories (one per line)
-        <textarea data-field="working_dirs" rows="4">${escapeHtml(dirs)}</textarea>
-      </label>
-      <label>
-        Clash API Probe URL
-        <input data-field="clash_api_probe_url" type="text" value="${escapeHtml(clashApiProbeUrl)}" />
-      </label>
-      <label>
-        Clash UI Probe URL
-        <input data-field="clash_ui_probe_url" type="text" value="${escapeHtml(clashUiProbeUrl)}" />
-      </label>
-      <fieldset>
-        <legend>Enabled Panels</legend>
-        <label><input data-panel="system" type="checkbox" ${panelSet.has("system") ? "checked" : ""} /> System</label>
-        <label><input data-panel="gpu" type="checkbox" ${panelSet.has("gpu") ? "checked" : ""} /> GPU</label>
-        <label><input data-panel="git" type="checkbox" ${panelSet.has("git") ? "checked" : ""} /> Git</label>
-        <label><input data-panel="clash" type="checkbox" ${panelSet.has("clash") ? "checked" : ""} /> Clash</label>
-      </fieldset>
-      <button class="btn-primary" data-action="save" type="button">Save</button>
-      <button class="btn-danger" data-action="delete" type="button">Delete</button>
-      <div class="status" data-role="status"></div>
+      <div class="settings-editor-head">
+        <h3>${escapeHtml(server.server_id)}</h3>
+        <p class="muted">Edit connection, targets, panels, and Clash probe details for this server.</p>
+      </div>
+      <section class="settings-editor-card settings-editor-card-identity">
+        <div class="settings-card-head">
+          <h4>Identity</h4>
+          <p class="muted">Connection details used to reach the server.</p>
+        </div>
+        <label>
+          SSH Alias
+          <input data-field="ssh_alias" type="text" value="${escapeHtml(draft.ssh_alias || "")}" />
+        </label>
+      </section>
+      <section class="settings-editor-card settings-editor-card-targets">
+        <div class="settings-card-head">
+          <h4>Monitoring Targets</h4>
+          <p class="muted">Working directories are checked in the git panel.</p>
+        </div>
+        <label>
+          Working Directories (one per line)
+          <textarea data-field="working_dirs" rows="6">${escapeHtml(dirs)}</textarea>
+        </label>
+      </section>
+      <div class="settings-editor-row">
+        <section class="settings-editor-card settings-editor-card-panels">
+          <div class="settings-card-head">
+            <h4>Panels</h4>
+            <p class="muted">Control which sections appear on the monitor card.</p>
+          </div>
+          <fieldset>
+            <legend>Enabled Panels</legend>
+            <label><input data-panel="system" type="checkbox" ${panelSet.has("system") ? "checked" : ""} /> System</label>
+            <label><input data-panel="gpu" type="checkbox" ${panelSet.has("gpu") ? "checked" : ""} /> GPU</label>
+            <label><input data-panel="git" type="checkbox" ${panelSet.has("git") ? "checked" : ""} /> Git</label>
+            <label><input data-panel="clash" type="checkbox" ${panelSet.has("clash") ? "checked" : ""} /> Clash</label>
+          </fieldset>
+        </section>
+        <section class="settings-editor-card settings-editor-card-probes">
+          <div class="settings-card-head">
+            <h4>Clash Probes</h4>
+            <p class="muted">Probe URLs are used for API and UI reachability checks.</p>
+          </div>
+          <label>
+            Clash API Probe URL
+            <input data-field="clash_api_probe_url" type="text" value="${escapeHtml(clashApiProbeUrl)}" />
+          </label>
+          <label>
+            Clash UI Probe URL
+            <input data-field="clash_ui_probe_url" type="text" value="${escapeHtml(clashUiProbeUrl)}" />
+          </label>
+        </section>
+      </div>
+      ${renderSettingsEditorFooter({ dirty: false })}
     </div>
   `;
 }
@@ -874,10 +914,10 @@ function renderSettingsEditorPanel(servers) {
   }
   const selectedServer = servers.find((server) => server.server_id === state.selectedSettingsServerId);
   if (!selectedServer) {
-    panel.innerHTML = '<p class="muted">Select a server to edit its settings.</p>';
+    panel.innerHTML = '<div class="settings-editor-empty"><p class="muted">Select a server to edit its settings.</p></div>';
     return;
   }
-  panel.innerHTML = serverEditorTemplate(selectedServer);
+  panel.innerHTML = renderSettingsEditorCards(selectedServer);
   bindServerEditorEvents();
 }
 

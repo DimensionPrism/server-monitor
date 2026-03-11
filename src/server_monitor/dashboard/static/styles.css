@@ -505,6 +505,13 @@ main {
   gap: 1.25rem;
 }
 
+.settings-workspace-grid {
+  display: grid;
+  grid-template-columns: minmax(250px, 0.9fr) minmax(0, 1.8fr);
+  gap: 1.25rem;
+  align-items: start;
+}
+
 .settings-add-card,
 .settings-overview-section,
 .settings-editor-panel {
@@ -525,6 +532,10 @@ main {
 .settings-overview {
   display: grid;
   gap: 0.75rem;
+}
+
+.settings-editor-canvas {
+  min-height: 100%;
 }
 
 .settings-overview-row {
@@ -573,6 +584,53 @@ main {
 .server-editor {
   display: grid;
   gap: 0.9rem;
+}
+
+.settings-editor-head {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.settings-card-head {
+  display: grid;
+  gap: 0.3rem;
+}
+
+.settings-card-head h4 {
+  margin: 0;
+  font-size: 0.92rem;
+}
+
+.settings-editor-card,
+.settings-editor-footer {
+  border: 1px solid rgba(153, 190, 221, 0.12);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.03);
+  padding: 1rem;
+}
+
+.settings-editor-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.9rem;
+}
+
+.settings-editor-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.settings-editor-footer-actions {
+  display: inline-flex;
+  gap: 0.75rem;
+}
+
+.settings-editor-empty {
+  min-height: 100%;
+  display: grid;
+  place-items: center;
 }
 
 .settings-form label,
@@ -685,9 +743,15 @@ main {
 
   .git-repo-head,
   .server-card-head,
-  .settings-overview-main {
+  .settings-overview-main,
+  .settings-editor-footer {
     flex-direction: column;
     align-items: flex-start;
+  }
+
+  .settings-workspace-grid,
+  .settings-editor-row {
+    grid-template-columns: 1fr;
   }
 
   .kv {
