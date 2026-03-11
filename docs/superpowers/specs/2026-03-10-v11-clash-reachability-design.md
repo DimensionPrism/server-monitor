@@ -22,7 +22,7 @@ Checks must be secret-aware for both API and UI probes, using a read-only server
 
 ### Out of Scope
 
-- Agent-side collectors/config (`src/server_monitor/agent/*`)
+- Legacy per-server agent implementation details (removed from the current repo)
 - Clash UI tunnel-open flow (separate roadmap item)
 - Notifications/retry architecture changes unrelated to Clash checks
 
