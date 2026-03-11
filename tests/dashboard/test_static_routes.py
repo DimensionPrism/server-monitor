@@ -31,6 +31,22 @@ def test_app_js_includes_safe_git_ops_controls():
     assert "data-git-op=\"checkout\"" in response.text
 
 
+def test_app_js_renders_summary_first_monitor_helpers():
+    from server_monitor.dashboard.api import create_dashboard_app
+    from server_monitor.dashboard.ws_hub import WebSocketHub
+
+    app = create_dashboard_app(ws_hub=WebSocketHub())
+    client = TestClient(app)
+
+    response = client.get("/static/app.js")
+
+    assert response.status_code == 200
+    assert "function renderServerSummary" in response.text
+    assert "function renderSummaryMetric" in response.text
+    assert "server-summary-rail" in response.text
+    assert "summary-metric" in response.text
+
+
 def test_app_js_gpu_panel_supports_runtime_gpu_fields():
     from server_monitor.dashboard.api import create_dashboard_app
     from server_monitor.dashboard.ws_hub import WebSocketHub
@@ -95,6 +111,22 @@ def test_app_js_nested_sections_have_expected_default_open_state():
     assert "summaryBadgeHtml: renderFreshnessBadge(freshness.gpu)" in response.text
     assert "summaryBadgeHtml: renderFreshnessBadge(freshness.git)" in response.text
     assert "summaryBadgeHtml: renderFreshnessBadge(freshness.clash)" in response.text
+
+
+def test_app_js_collapses_monitor_detail_sections_by_default():
+    from server_monitor.dashboard.api import create_dashboard_app
+    from server_monitor.dashboard.ws_hub import WebSocketHub
+
+    app = create_dashboard_app(ws_hub=WebSocketHub())
+    client = TestClient(app)
+
+    response = client.get("/static/app.js")
+
+    assert response.status_code == 200
+    assert 'renderPanelGroup("System", renderSystemPanel(snapshot), {\n        groupClass: "system",\n        open: false,' in response.text
+    assert 'renderPanelGroup("GPU", renderGpuPanel(snapshot), {\n        groupClass: "gpu",\n        open: false,' in response.text
+    assert 'renderPanelGroup("Git", renderGitPanel(update), {\n        groupClass: "git",\n        open: false,' in response.text
+    assert 'renderPanelGroup("Clash", renderClashPanel(update.server_id, update.clash || {}), {\n        groupClass: "clash",\n        open: false,' in response.text
 
 
 def test_styles_css_has_server_board_and_gpu_autofit_grid_rules():
