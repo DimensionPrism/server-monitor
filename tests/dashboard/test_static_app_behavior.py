@@ -197,7 +197,52 @@ def test_render_monitor_summary_respects_enabled_panels():
     )
 
 
-def test_selecting_another_server_preserves_unsaved_settings_draft():
+def test_settings_editor_footer_reflects_dirty_state():
+    _run_app_js_test(
+        """
+        const panel = document.getElementById("settings-editor-panel");
+
+        __testExports.state.settings = {
+          servers: [
+            {
+              server_id: "server-a",
+              ssh_alias: "alias-a",
+              working_dirs: ["/work/a"],
+              enabled_panels: ["system", "gpu"],
+              clash_api_probe_url: "http://127.0.0.1:9090/version",
+              clash_ui_probe_url: "http://127.0.0.1:9090/ui",
+            },
+          ],
+        };
+        __testExports.state.selectedSettingsServerId = "server-a";
+        __testExports.state.settingsDrafts.clear();
+
+        __testExports.renderSettingsEditorPanel(__testExports.state.settings.servers);
+        const cleanState = panel.innerHTML.includes('data-dirty-state="clean"') ? "clean" : "missing";
+
+        __testExports.state.settingsDrafts.set("server-a", {
+          server_id: "server-a",
+          ssh_alias: "edited-alias-a",
+          working_dirs_raw: "/work/a\\n/work/b",
+          clash_api_probe_url: "http://127.0.0.1:9090/version",
+          clash_ui_probe_url: "http://127.0.0.1:9090/ui",
+          enabled_panels: ["system", "gpu"],
+        });
+
+        __testExports.renderSettingsEditorPanel(__testExports.state.settings.servers);
+        const dirtyState = panel.innerHTML.includes('data-dirty-state="dirty"') ? "dirty" : "clean";
+
+        if (cleanState !== "clean") {
+          throw new Error("editor footer did not render a clean state");
+        }
+        if (dirtyState !== "dirty") {
+          throw new Error("editor footer did not render a dirty state");
+        }
+        """
+    )
+
+
+def test_settings_split_view_keeps_drafts_when_switching_rows():
     _run_app_js_test(
         """
         const panel = document.getElementById("settings-editor-panel");
@@ -281,6 +326,9 @@ def test_selecting_another_server_preserves_unsaved_settings_draft():
         __testExports.selectSettingsServer("server-a");
         if (!panel.innerHTML.includes("draft-alias-a")) {
           throw new Error("draft was not restored when returning to the server");
+        }
+        if (!panel.innerHTML.includes('data-dirty-state="dirty"')) {
+          throw new Error("restored draft did not mark the footer as dirty");
         }
         """
     )
