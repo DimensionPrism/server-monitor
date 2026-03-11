@@ -43,9 +43,10 @@ def _escape_applescript_string(value: str) -> str:
 
 
 def _open_windows(*, ssh_alias: str, repo_path: str, which, spawn) -> LaunchResult:
+    ssh_argv = _build_ssh_argv(ssh_alias=ssh_alias, repo_path=repo_path)
     ssh_command_text = _build_ssh_command_text(ssh_alias=ssh_alias, repo_path=repo_path)
     if which("wt"):
-        argv = ["wt", "new-tab", "powershell", "-NoExit", "-Command", ssh_command_text]
+        argv = ["wt", "new-tab", *ssh_argv]
         spawn(argv)
         return LaunchResult(ok=True, launched_with="wt", detail="Opened with Windows Terminal")
 
