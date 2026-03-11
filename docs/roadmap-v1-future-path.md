@@ -8,6 +8,9 @@
 - Landed: real secret-aware Clash API/UI reachability checks with configurable probe URLs.
 - Landed: non-blocking status poll path so SSH status stalls no longer block refresh cycles or overwrite last-known Clash state on transient secret-command failures.
 - Landed: one-click Clash UI tunnel-open flow from the dashboard (agentless SSH local forward).
+- Landed: Clash UI login-assist flow (secret handoff + auto-login setup URL + copy-secret action).
+- Landed: Clash secret probing fallback path for non-interactive SSH shells (`clashsecret`/`clashctl secret`/`runtime.yaml`).
+- Landed: Clash probe success accepts `2xx` and redirect `3xx` responses.
 
 ## Short-Term TODO (1-3 weeks)
 
@@ -28,7 +31,7 @@
 
 ## Release Sequencing
 
-1. `v1.1`: Freshness UX + secret-aware Clash reachability + one-click tunnel open.
+1. `v1.1`: Freshness UX + secret-aware Clash reachability + one-click tunnel open + Clash login assist.
 2. `v1.2`: Reliability and diagnostics (timeouts/retries/health/notifications).
 3. `v1.3`: Historical data + policy controls.
 4. `v2.0`: Multi-user and plugin-oriented architecture.
