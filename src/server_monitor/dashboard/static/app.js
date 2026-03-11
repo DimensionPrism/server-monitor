@@ -2,6 +2,8 @@ const state = {
   updates: new Map(),
   settings: null,
   selectedSettingsServerId: null,
+  settingsAddExpanded: true,
+  settingsAddTouched: false,
   settingsDrafts: new Map(),
   settingsSaveStates: new Map(),
   gitOps: new Map(),
@@ -775,6 +777,83 @@ function selectSettingsServer(serverId) {
   renderSettings();
 }
 
+function resetAddServerForm() {
+  const serverIdInput = byId("new-server-id");
+  const aliasInput = byId("new-server-alias");
+  const dirsInput = byId("new-server-dirs");
+  const clashApiInput = byId("new-clash-api-probe-url");
+  const clashUiInput = byId("new-clash-ui-probe-url");
+
+  if (serverIdInput) {
+    serverIdInput.value = "";
+  }
+  if (aliasInput) {
+    aliasInput.value = "";
+  }
+  if (dirsInput) {
+    dirsInput.value = "";
+  }
+  if (clashApiInput) {
+    clashApiInput.value = DEFAULT_CLASH_API_PROBE_URL;
+  }
+  if (clashUiInput) {
+    clashUiInput.value = DEFAULT_CLASH_UI_PROBE_URL;
+  }
+
+  document.querySelectorAll('input[name="new-panel"]').forEach((el) => {
+    el.checked = true;
+  });
+}
+
+function renderSettingsAddCard(servers = []) {
+  const shell = byId("settings-shell");
+  const addCard = byId("settings-add-card");
+  const toggle = byId("settings-add-toggle");
+  if (!shell || !addCard) {
+    return;
+  }
+
+  const hasServers = Array.isArray(servers) && servers.length > 0;
+  if (!hasServers) {
+    state.settingsAddTouched = false;
+    state.settingsAddExpanded = true;
+  } else if (!state.settingsAddTouched) {
+    state.settingsAddExpanded = false;
+  }
+
+  const expanded = state.settingsAddExpanded !== false;
+  shell.dataset.addExpanded = expanded ? "open" : "collapsed";
+  shell.setAttribute("data-add-expanded", expanded ? "true" : "false");
+  addCard.dataset.expanded = expanded ? "open" : "collapsed";
+  addCard.className = expanded ? "settings-add-card" : "settings-add-card collapsed";
+
+  if (toggle) {
+    toggle.textContent = expanded ? "Hide Add Server" : "Add Server";
+    toggle.setAttribute("aria-expanded", expanded ? "true" : "false");
+  }
+}
+
+function setSettingsAddExpanded(expanded, options = {}) {
+  state.settingsAddTouched = options.markTouched !== false;
+  state.settingsAddExpanded = expanded;
+  if (!expanded && options.reset) {
+    resetAddServerForm();
+  }
+  renderSettingsAddCard((state.settings && state.settings.servers) || []);
+}
+
+function bindSettingsAddToggle() {
+  const button = byId("settings-add-toggle");
+  if (!button || button.dataset.bound === "1") {
+    return;
+  }
+  button.dataset.bound = "1";
+  button.addEventListener("click", () => {
+    const isExpanded = state.settingsAddExpanded !== false;
+    setSettingsAddExpanded(!isExpanded, { reset: isExpanded, markTouched: true });
+  });
+}
+
 function renderSettingsEditorFooter(options = {}) {
   const dirtyState = options.dirty ? "dirty" : "clean";
   const saveState = options.saveState || "idle";
@@ -1019,6 +1098,7 @@ function renderSettings() {
     state.selectedSettingsServerId = null;
   }
 
+  renderSettingsAddCard(servers);
   renderSettingsOverview(servers);
   renderSettingsEditorPanel(servers);
 }
@@ -1037,8 +1117,10 @@ async function loadSettings() {
 
 function bindAddServerForm() {
   const form = byId("add-server-form");
-  byId("new-clash-api-probe-url").value = DEFAULT_CLASH_API_PROBE_URL;
-  byId("new-clash-ui-probe-url").value = DEFAULT_CLASH_UI_PROBE_URL;
+  if (!form) {
+    return;
+  }
+  resetAddServerForm();
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
 
@@ -1058,13 +1140,9 @@ function bindAddServerForm() {
       clash_ui_probe_url: clashUiProbeUrl,
     });
     state.selectedSettingsServerId = serverId;
-
-    form.reset();
-    byId("new-clash-api-probe-url").value = DEFAULT_CLASH_API_PROBE_URL;
-    byId("new-clash-ui-probe-url").value = DEFAULT_CLASH_UI_PROBE_URL;
-    document.querySelectorAll('input[name="new-panel"]').forEach((el) => {
-      el.checked = true;
-    });
+    state.settingsAddTouched = false;
+    state.settingsAddExpanded = false;
+    resetAddServerForm();
     await loadSettings();
   });
 }
@@ -1090,6 +1168,7 @@ function connectWs() {
 
 async function init() {
   setTabs();
+  bindSettingsAddToggle();
   bindAddServerForm();
   await loadSettings();
   renderMonitor();

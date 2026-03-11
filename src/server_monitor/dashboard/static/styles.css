@@ -559,6 +559,29 @@ main {
   gap: 1.25rem;
 }
 
+.settings-shell-head {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+}
+
+.settings-add-toggle {
+  justify-self: start;
+  border: 1px solid rgba(153, 190, 221, 0.16);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text);
+  padding: 0.68rem 1rem;
+  font-weight: 700;
+  cursor: pointer;
+  box-shadow: var(--shadow-soft);
+}
+
+.settings-add-toggle:hover {
+  border-color: rgba(34, 211, 238, 0.3);
+  background: rgba(34, 211, 238, 0.08);
+}
+
 .settings-workspace-grid {
   display: grid;
   grid-template-columns: minmax(250px, 0.9fr) minmax(0, 1.8fr);
@@ -570,6 +593,23 @@ main {
 .settings-overview-section,
 .settings-editor-panel {
   padding: 1.25rem;
+}
+
+.settings-add-card {
+  transition: max-height 220ms ease, opacity 180ms ease, padding 180ms ease, border-width 180ms ease, margin 180ms ease;
+}
+
+.settings-add-card.collapsed {
+  max-height: 0;
+  opacity: 0;
+  overflow: hidden;
+}
+
+.settings-shell[data-add-expanded="false"] .settings-add-card {
+  padding-top: 0;
+  padding-bottom: 0;
+  border-width: 0;
+  box-shadow: none;
 }
 
 .settings-add-card h2,
