@@ -16,7 +16,7 @@ def test_root_serves_dashboard_html():
     assert "new-clash-ui-probe-url" in response.text
 
 
-def test_root_serves_settings_workspace_shell():
+def test_root_serves_split_settings_workspace_shell():
     from server_monitor.dashboard.api import create_dashboard_app
     from server_monitor.dashboard.ws_hub import WebSocketHub
 
@@ -27,8 +27,25 @@ def test_root_serves_settings_workspace_shell():
 
     assert response.status_code == 200
     assert "settings-shell" in response.text
+    assert "settings-workspace-grid" in response.text
+    assert "settings-overview-rail" in response.text
+    assert "settings-editor-canvas" in response.text
     assert "settings-overview" in response.text
     assert "settings-editor-panel" in response.text
+
+
+def test_root_serves_add_server_toggle_hooks():
+    from server_monitor.dashboard.api import create_dashboard_app
+    from server_monitor.dashboard.ws_hub import WebSocketHub
+
+    app = create_dashboard_app(ws_hub=WebSocketHub())
+    client = TestClient(app)
+
+    response = client.get("/")
+
+    assert response.status_code == 200
+    assert "settings-add-toggle" in response.text
+    assert "settings-add-card" in response.text
 
 
 def test_app_js_includes_safe_git_ops_controls():
@@ -46,7 +63,7 @@ def test_app_js_includes_safe_git_ops_controls():
     assert "data-git-op=\"checkout\"" in response.text
 
 
-def test_app_js_includes_settings_overview_selection_flow():
+def test_app_js_includes_grouped_settings_editor_hooks():
     from server_monitor.dashboard.api import create_dashboard_app
     from server_monitor.dashboard.ws_hub import WebSocketHub
 
@@ -59,6 +76,9 @@ def test_app_js_includes_settings_overview_selection_flow():
     assert "selectedSettingsServerId" in response.text
     assert "function renderSettingsOverview" in response.text
     assert "function renderSettingsEditorPanel" in response.text
+    assert "settings-editor-card" in response.text
+    assert "settings-editor-footer" in response.text
+    assert "data-dirty-state" in response.text
 
 
 def test_app_js_renders_summary_first_monitor_helpers():
@@ -204,6 +224,50 @@ def test_styles_css_has_gpu_tile_and_editor_panel_rules():
     assert response.status_code == 200
     assert ".gpu-card" in response.text
     assert ".settings-editor-panel" in response.text
+
+
+def test_styles_css_exposes_premium_monitor_classes():
+    from server_monitor.dashboard.api import create_dashboard_app
+    from server_monitor.dashboard.ws_hub import WebSocketHub
+
+    app = create_dashboard_app(ws_hub=WebSocketHub())
+    client = TestClient(app)
+
+    response = client.get("/static/styles.css")
+
+    assert response.status_code == 200
+    assert '.summary-metric[data-level="' in response.text
+    assert '.meter-fill[data-level="' in response.text
+    assert '.gpu-card[data-heat="' in response.text
+
+
+def test_app_js_includes_semantic_summary_and_gpu_heat_helpers():
+    from server_monitor.dashboard.api import create_dashboard_app
+    from server_monitor.dashboard.ws_hub import WebSocketHub
+
+    app = create_dashboard_app(ws_hub=WebSocketHub())
+    client = TestClient(app)
+
+    response = client.get("/static/app.js")
+
+    assert response.status_code == 200
+    assert "function getUtilizationLevel" in response.text
+    assert "function getGpuHeatLevel" in response.text
+
+
+def test_styles_css_has_motion_hooks_for_premium_refinement():
+    from server_monitor.dashboard.api import create_dashboard_app
+    from server_monitor.dashboard.ws_hub import WebSocketHub
+
+    app = create_dashboard_app(ws_hub=WebSocketHub())
+    client = TestClient(app)
+
+    response = client.get("/static/styles.css")
+
+    assert response.status_code == 200
+    assert ".panel-group" in response.text
+    assert "transition: max-height" in response.text
+    assert ".settings-overview-row:active" in response.text
 
 
 def test_app_js_persists_panel_open_state_on_rerender():

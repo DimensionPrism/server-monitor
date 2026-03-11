@@ -24,8 +24,12 @@
       </section>
 
       <section id="view-settings" class="view">
-        <section class="settings-shell">
-          <div class="settings-add-card">
+        <section id="settings-shell" class="settings-shell">
+          <div class="settings-shell-head">
+            <button id="settings-add-toggle" class="settings-add-toggle" type="button">Add Server</button>
+          </div>
+
+          <div id="settings-add-card" class="settings-add-card">
             <h2>Server Settings</h2>
 
             <form id="add-server-form" class="settings-form">
@@ -60,14 +64,16 @@
             </form>
           </div>
 
-          <div class="settings-overview-section">
-            <div class="settings-section-head">
-              <h3>Configured Servers</h3>
+          <div class="settings-workspace-grid">
+            <div class="settings-overview-section settings-overview-rail">
+              <div class="settings-section-head">
+                <h3>Configured Servers</h3>
+              </div>
+              <div id="settings-overview" class="settings-overview"></div>
             </div>
-            <div id="settings-overview" class="settings-overview"></div>
-          </div>
 
-          <div id="settings-editor-panel" class="settings-editor-panel"></div>
+            <div id="settings-editor-panel" class="settings-editor-panel settings-editor-canvas"></div>
+          </div>
         </section>
       </section>
     </main>

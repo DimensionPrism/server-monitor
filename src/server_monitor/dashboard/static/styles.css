@@ -140,6 +140,7 @@ main {
   border-radius: 18px;
   background: linear-gradient(180deg, rgba(17, 26, 38, 0.92), rgba(12, 20, 31, 0.96));
   box-shadow: var(--shadow-card);
+  transition: transform 180ms ease, border-color 180ms ease, box-shadow 180ms ease, background-color 180ms ease;
 }
 
 .card {
@@ -187,6 +188,21 @@ main {
   border: 1px solid rgba(167, 205, 236, 0.08);
   border-radius: 14px;
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0.025));
+  transition: transform 160ms ease, border-color 160ms ease, box-shadow 160ms ease, background-color 160ms ease;
+}
+
+.summary-metric[data-level="ok"] {
+  border-color: rgba(34, 197, 94, 0.2);
+}
+
+.summary-metric[data-level="warn"] {
+  border-color: rgba(245, 158, 11, 0.28);
+  box-shadow: inset 0 0 0 1px rgba(245, 158, 11, 0.08);
+}
+
+.summary-metric[data-level="danger"] {
+  border-color: rgba(239, 68, 68, 0.28);
+  box-shadow: inset 0 0 0 1px rgba(239, 68, 68, 0.08);
 }
 
 .summary-metric-label {
@@ -217,6 +233,7 @@ main {
   border-radius: 14px;
   background: linear-gradient(180deg, rgba(19, 31, 45, 0.92), rgba(16, 26, 39, 0.98));
   overflow: hidden;
+  transition: border-color 180ms ease, box-shadow 180ms ease, transform 180ms ease;
 }
 
 .panel-group summary {
@@ -226,6 +243,7 @@ main {
   color: var(--text);
   font-size: 0.92rem;
   font-weight: 600;
+  transition: background-color 160ms ease, color 160ms ease;
 }
 
 .panel-group summary:hover {
@@ -276,7 +294,17 @@ main {
 }
 
 .panel-group-body {
+  padding: 0 1rem;
+  max-height: 0;
+  opacity: 0;
+  overflow: hidden;
+  transition: max-height 260ms ease, opacity 220ms ease, padding 220ms ease;
+}
+
+.panel-group[open] .panel-group-body {
   padding: 1rem;
+  max-height: 1200px;
+  opacity: 1;
 }
 
 .muted {
@@ -338,6 +366,19 @@ main {
 .meter-fill {
   height: 100%;
   background: linear-gradient(90deg, var(--accent), var(--accent-strong));
+  transition: width 220ms ease, background 180ms ease;
+}
+
+.meter-fill[data-level="ok"] {
+  background: linear-gradient(90deg, #22c55e, #14b8a6);
+}
+
+.meter-fill[data-level="warn"] {
+  background: linear-gradient(90deg, #facc15, #f59e0b);
+}
+
+.meter-fill[data-level="danger"] {
+  background: linear-gradient(90deg, #f59e0b, #ef4444);
 }
 
 .meter-value {
@@ -358,6 +399,19 @@ main {
   border-radius: 14px;
   padding: 0.75rem;
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0.025));
+  transition: transform 160ms ease, border-color 160ms ease, box-shadow 180ms ease, background-color 180ms ease;
+}
+
+.gpu-card[data-heat="cool"] {
+  box-shadow: inset 0 0 0 1px rgba(34, 211, 238, 0.08);
+}
+
+.gpu-card[data-heat="warm"] {
+  box-shadow: inset 0 0 0 1px rgba(245, 158, 11, 0.18);
+}
+
+.gpu-card[data-heat="hot"] {
+  box-shadow: inset 0 0 0 1px rgba(239, 68, 68, 0.26);
 }
 
 .gpu-head {
@@ -505,10 +559,57 @@ main {
   gap: 1.25rem;
 }
 
+.settings-shell-head {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+}
+
+.settings-add-toggle {
+  justify-self: start;
+  border: 1px solid rgba(153, 190, 221, 0.16);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text);
+  padding: 0.68rem 1rem;
+  font-weight: 700;
+  cursor: pointer;
+  box-shadow: var(--shadow-soft);
+}
+
+.settings-add-toggle:hover {
+  border-color: rgba(34, 211, 238, 0.3);
+  background: rgba(34, 211, 238, 0.08);
+}
+
+.settings-workspace-grid {
+  display: grid;
+  grid-template-columns: minmax(250px, 0.9fr) minmax(0, 1.8fr);
+  gap: 1.25rem;
+  align-items: start;
+}
+
 .settings-add-card,
 .settings-overview-section,
 .settings-editor-panel {
   padding: 1.25rem;
+}
+
+.settings-add-card {
+  transition: max-height 220ms ease, opacity 180ms ease, padding 180ms ease, border-width 180ms ease, margin 180ms ease;
+}
+
+.settings-add-card.collapsed {
+  max-height: 0;
+  opacity: 0;
+  overflow: hidden;
+}
+
+.settings-shell[data-add-expanded="false"] .settings-add-card {
+  padding-top: 0;
+  padding-bottom: 0;
+  border-width: 0;
+  box-shadow: none;
 }
 
 .settings-add-card h2,
@@ -527,6 +628,10 @@ main {
   gap: 0.75rem;
 }
 
+.settings-editor-canvas {
+  min-height: 100%;
+}
+
 .settings-overview-row {
   width: 100%;
   border: 1px solid rgba(153, 190, 221, 0.12);
@@ -536,6 +641,7 @@ main {
   cursor: pointer;
   text-align: left;
   padding: 0.9rem 1rem;
+  transition: transform 160ms ease, border-color 160ms ease, background-color 160ms ease, box-shadow 160ms ease;
 }
 
 .settings-overview-row:hover {
@@ -573,6 +679,85 @@ main {
 .server-editor {
   display: grid;
   gap: 0.9rem;
+}
+
+.settings-editor-head {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.settings-card-head {
+  display: grid;
+  gap: 0.3rem;
+}
+
+.settings-card-head h4 {
+  margin: 0;
+  font-size: 0.92rem;
+}
+
+.settings-editor-card,
+.settings-editor-footer {
+  border: 1px solid rgba(153, 190, 221, 0.12);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.03);
+  padding: 1rem;
+  transition: transform 180ms ease, border-color 180ms ease, box-shadow 180ms ease, background-color 180ms ease;
+}
+
+.settings-editor-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.9rem;
+}
+
+.settings-editor-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.75rem;
+  position: sticky;
+  bottom: 0;
+  backdrop-filter: blur(14px);
+  box-shadow: 0 18px 38px rgba(1, 7, 16, 0.22);
+}
+
+.settings-editor-footer-actions {
+  display: inline-flex;
+  gap: 0.75rem;
+}
+
+.settings-editor-footer-status {
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+
+.settings-editor-footer[data-dirty-state="dirty"] {
+  border-color: rgba(34, 211, 238, 0.34);
+  box-shadow: 0 18px 36px rgba(14, 165, 233, 0.14);
+}
+
+.settings-editor-footer[data-dirty-state="dirty"] .settings-editor-footer-status::before {
+  content: "Unsaved changes";
+  color: #8fdcff;
+}
+
+.settings-editor-footer[data-dirty-state="clean"] .settings-editor-footer-status::before {
+  content: "All changes saved";
+}
+
+.settings-editor-footer[data-save-state="saved"] .settings-editor-footer-status {
+  color: #8fdcff;
+}
+
+.server-editor[data-transition-state="entering"] {
+  animation: settings-editor-enter 220ms ease;
+}
+
+.settings-editor-empty {
+  min-height: 100%;
+  display: grid;
+  place-items: center;
 }
 
 .settings-form label,
@@ -651,12 +836,24 @@ main {
   background: rgba(239, 68, 68, 0.12);
   color: #ffc1c1;
   border-color: rgba(239, 68, 68, 0.22);
+  transition: transform 160ms ease, box-shadow 160ms ease, border-color 160ms ease, background-color 160ms ease;
 }
 
 .status {
   margin-top: 0.1rem;
   font-size: 0.78rem;
   color: #8fdcff;
+}
+
+@keyframes settings-editor-enter {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 @media (max-width: 980px) {
@@ -685,9 +882,15 @@ main {
 
   .git-repo-head,
   .server-card-head,
-  .settings-overview-main {
+  .settings-overview-main,
+  .settings-editor-footer {
     flex-direction: column;
     align-items: flex-start;
+  }
+
+  .settings-workspace-grid,
+  .settings-editor-row {
+    grid-template-columns: 1fr;
   }
 
   .kv {
