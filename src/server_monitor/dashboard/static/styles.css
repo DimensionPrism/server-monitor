@@ -189,6 +189,20 @@ main {
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0.025));
 }
 
+.summary-metric[data-level="ok"] {
+  border-color: rgba(34, 197, 94, 0.2);
+}
+
+.summary-metric[data-level="warn"] {
+  border-color: rgba(245, 158, 11, 0.28);
+  box-shadow: inset 0 0 0 1px rgba(245, 158, 11, 0.08);
+}
+
+.summary-metric[data-level="danger"] {
+  border-color: rgba(239, 68, 68, 0.28);
+  box-shadow: inset 0 0 0 1px rgba(239, 68, 68, 0.08);
+}
+
 .summary-metric-label {
   color: var(--muted);
   font-size: 0.72rem;
@@ -340,6 +354,18 @@ main {
   background: linear-gradient(90deg, var(--accent), var(--accent-strong));
 }
 
+.meter-fill[data-level="ok"] {
+  background: linear-gradient(90deg, #22c55e, #14b8a6);
+}
+
+.meter-fill[data-level="warn"] {
+  background: linear-gradient(90deg, #facc15, #f59e0b);
+}
+
+.meter-fill[data-level="danger"] {
+  background: linear-gradient(90deg, #f59e0b, #ef4444);
+}
+
 .meter-value {
   text-align: right;
   font-family: var(--font-data);
@@ -358,6 +384,18 @@ main {
   border-radius: 14px;
   padding: 0.75rem;
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0.025));
+}
+
+.gpu-card[data-heat="cool"] {
+  box-shadow: inset 0 0 0 1px rgba(34, 211, 238, 0.08);
+}
+
+.gpu-card[data-heat="warm"] {
+  box-shadow: inset 0 0 0 1px rgba(245, 158, 11, 0.18);
+}
+
+.gpu-card[data-heat="hot"] {
+  box-shadow: inset 0 0 0 1px rgba(239, 68, 68, 0.26);
 }
 
 .gpu-head {

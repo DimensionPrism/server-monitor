@@ -120,10 +120,11 @@ function setTabs() {
 function metricBar(label, value) {
   const percent = clampPercent(value);
   const valueText = Number.isFinite(Number(value)) ? `${Number(value).toFixed(1)}%` : "--";
+  const level = getUtilizationLevel(value);
   return `
     <div class="meter-row">
       <div class="meter-label">${escapeHtml(label)}</div>
-      <div class="meter-track"><div class="meter-fill" style="width:${percent}%"></div></div>
+      <div class="meter-track"><div class="meter-fill" data-level="${level}" style="width:${percent}%"></div></div>
       <div class="meter-value">${valueText}</div>
     </div>
   `;
@@ -155,9 +156,37 @@ function pickFreshnessForEnabledPanels(freshnessMap, panels) {
   return enabledFreshness;
 }
 
-function renderSummaryMetric(label, value, meta) {
+function getUtilizationLevel(percent) {
+  const numeric = Number(percent);
+  if (!Number.isFinite(numeric)) {
+    return "ok";
+  }
+  if (numeric >= 90) {
+    return "danger";
+  }
+  if (numeric >= 70) {
+    return "warn";
+  }
+  return "ok";
+}
+
+function getGpuHeatLevel(temperature) {
+  const numeric = Number(temperature);
+  if (!Number.isFinite(numeric)) {
+    return "cool";
+  }
+  if (numeric >= 85) {
+    return "hot";
+  }
+  if (numeric >= 75) {
+    return "warm";
+  }
+  return "cool";
+}
+
+function renderSummaryMetric(label, value, meta, level = "ok") {
   return `
-    <div class="summary-metric">
+    <div class="summary-metric" data-level="${level}">
       <div class="summary-metric-label">${escapeHtml(label)}</div>
       <div class="summary-metric-value">${escapeHtml(value)}</div>
       <div class="summary-metric-meta">${escapeHtml(meta)}</div>
@@ -168,9 +197,9 @@ function renderSummaryMetric(label, value, meta) {
 function renderServerSummary(snapshot, panels) {
   const metrics = [];
   if (panels.has("system")) {
-    metrics.push(renderSummaryMetric("CPU", formatPercent(snapshot.cpu_percent), "Host load"));
-    metrics.push(renderSummaryMetric("Memory", formatPercent(snapshot.memory_percent), "RAM used"));
-    metrics.push(renderSummaryMetric("Disk", formatPercent(snapshot.disk_percent), "Disk used"));
+    metrics.push(renderSummaryMetric("CPU", formatPercent(snapshot.cpu_percent), "Host load", getUtilizationLevel(snapshot.cpu_percent)));
+    metrics.push(renderSummaryMetric("Memory", formatPercent(snapshot.memory_percent), "RAM used", getUtilizationLevel(snapshot.memory_percent)));
+    metrics.push(renderSummaryMetric("Disk", formatPercent(snapshot.disk_percent), "Disk used", getUtilizationLevel(snapshot.disk_percent)));
   }
 
   const gpus = Array.isArray(snapshot.gpus) ? snapshot.gpus : [];
@@ -180,7 +209,7 @@ function renderServerSummary(snapshot, panels) {
     const activeGpuCount = gpuUtilizations.filter((utilization) => utilization >= GPU_ACTIVE_THRESHOLD_PERCENT).length;
     const gpuValue = gpus.length > 0 ? `${activeGpuCount}/${gpus.length} active` : "--";
     const gpuMeta = gpus.length > 0 ? `peak ${Math.round(gpuPeak)}%` : "No GPU data";
-    metrics.push(renderSummaryMetric("GPU", gpuValue, gpuMeta));
+    metrics.push(renderSummaryMetric("GPU", gpuValue, gpuMeta, getUtilizationLevel(gpuPeak)));
   }
 
   if (metrics.length === 0) {
@@ -238,9 +267,10 @@ function renderGpuPanel(snapshot) {
           ? (Number(memoryUsed) / Number(memoryTotal)) * 100
           : 0);
       const temperature = gpu.temperature_celsius ?? gpu.temperature_c;
+      const heatLevel = getGpuHeatLevel(temperature);
 
       return `
-      <div class="gpu-card">
+      <div class="gpu-card" data-heat="${heatLevel}">
         <div class="gpu-head">GPU ${gpu.index}: ${escapeHtml(gpu.name || "unknown")}</div>
         ${metricBar("Util", utilization)}
         ${metricBar("Mem", memoryUtil)}
