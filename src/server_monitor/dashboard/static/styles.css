@@ -140,6 +140,7 @@ main {
   border-radius: 18px;
   background: linear-gradient(180deg, rgba(17, 26, 38, 0.92), rgba(12, 20, 31, 0.96));
   box-shadow: var(--shadow-card);
+  transition: transform 180ms ease, border-color 180ms ease, box-shadow 180ms ease, background-color 180ms ease;
 }
 
 .card {
@@ -187,6 +188,7 @@ main {
   border: 1px solid rgba(167, 205, 236, 0.08);
   border-radius: 14px;
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0.025));
+  transition: transform 160ms ease, border-color 160ms ease, box-shadow 160ms ease, background-color 160ms ease;
 }
 
 .summary-metric[data-level="ok"] {
@@ -231,6 +233,7 @@ main {
   border-radius: 14px;
   background: linear-gradient(180deg, rgba(19, 31, 45, 0.92), rgba(16, 26, 39, 0.98));
   overflow: hidden;
+  transition: border-color 180ms ease, box-shadow 180ms ease, transform 180ms ease;
 }
 
 .panel-group summary {
@@ -240,6 +243,7 @@ main {
   color: var(--text);
   font-size: 0.92rem;
   font-weight: 600;
+  transition: background-color 160ms ease, color 160ms ease;
 }
 
 .panel-group summary:hover {
@@ -290,7 +294,17 @@ main {
 }
 
 .panel-group-body {
+  padding: 0 1rem;
+  max-height: 0;
+  opacity: 0;
+  overflow: hidden;
+  transition: max-height 260ms ease, opacity 220ms ease, padding 220ms ease;
+}
+
+.panel-group[open] .panel-group-body {
   padding: 1rem;
+  max-height: 1200px;
+  opacity: 1;
 }
 
 .muted {
@@ -352,6 +366,7 @@ main {
 .meter-fill {
   height: 100%;
   background: linear-gradient(90deg, var(--accent), var(--accent-strong));
+  transition: width 220ms ease, background 180ms ease;
 }
 
 .meter-fill[data-level="ok"] {
@@ -384,6 +399,7 @@ main {
   border-radius: 14px;
   padding: 0.75rem;
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0.025));
+  transition: transform 160ms ease, border-color 160ms ease, box-shadow 180ms ease, background-color 180ms ease;
 }
 
 .gpu-card[data-heat="cool"] {
@@ -585,6 +601,7 @@ main {
   cursor: pointer;
   text-align: left;
   padding: 0.9rem 1rem;
+  transition: transform 160ms ease, border-color 160ms ease, background-color 160ms ease, box-shadow 160ms ease;
 }
 
 .settings-overview-row:hover {
@@ -645,6 +662,7 @@ main {
   border-radius: 16px;
   background: rgba(255, 255, 255, 0.03);
   padding: 1rem;
+  transition: transform 180ms ease, border-color 180ms ease, box-shadow 180ms ease, background-color 180ms ease;
 }
 
 .settings-editor-row {
@@ -690,6 +708,10 @@ main {
 
 .settings-editor-footer[data-save-state="saved"] .settings-editor-footer-status {
   color: #8fdcff;
+}
+
+.server-editor[data-transition-state="entering"] {
+  animation: settings-editor-enter 220ms ease;
 }
 
 .settings-editor-empty {
@@ -774,12 +796,24 @@ main {
   background: rgba(239, 68, 68, 0.12);
   color: #ffc1c1;
   border-color: rgba(239, 68, 68, 0.22);
+  transition: transform 160ms ease, box-shadow 160ms ease, border-color 160ms ease, background-color 160ms ease;
 }
 
 .status {
   margin-top: 0.1rem;
   font-size: 0.78rem;
   color: #8fdcff;
+}
+
+@keyframes settings-editor-enter {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 @media (max-width: 980px) {
