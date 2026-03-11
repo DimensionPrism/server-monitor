@@ -4,9 +4,18 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import suppress
+from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 import re
+import time
 
+from server_monitor.dashboard.command_policy import (
+    CommandHealthRecord,
+    CommandKind,
+    CommandPolicy,
+    classify_failure,
+    default_command_policies,
+)
 from server_monitor.dashboard.command_runner import CommandRunner
 from server_monitor.dashboard.parsers.clash import parse_clash_status
 from server_monitor.dashboard.parsers.git_status import parse_repo_status
@@ -29,6 +38,15 @@ DEFAULT_CLASH = {
 GIT_OPERATION_TIMEOUT_SECONDS = 20.0
 STATUS_COMMAND_TIMEOUT_SECONDS = 3.0
 STATUS_POLL_INLINE_BUDGET_SECONDS = 0.05
+
+
+@dataclass(slots=True)
+class _PolicyExecutionOutcome:
+    result: object
+    parsed: object | None
+    failure_class: str
+    attempt_count: int
+    message: str
 
 
 class SshCommandExecutor:
@@ -78,6 +96,8 @@ class DashboardRuntime:
         self._clash_last_poll_ok: dict[str, bool] = {}
         self._repo_last_poll_ok: dict[str, dict[str, bool]] = {}
         self._status_poll_tasks: dict[str, asyncio.Task] = {}
+        self._command_policies = default_command_policies()
+        self._recent_command_health: dict[tuple[str, str, str], list[CommandHealthRecord]] = {}
 
     async def start(self) -> None:
         if self._task is not None:
@@ -159,9 +179,31 @@ class DashboardRuntime:
 
         metric_tasks: dict[str, asyncio.Task] = {}
         if "system" in enabled:
-            metric_tasks["system"] = asyncio.create_task(self.executor.run(server.ssh_alias, _system_command()))
+            metric_tasks["system"] = asyncio.create_task(
+                self._execute_with_policy(
+                    server_id=server.server_id,
+                    ssh_alias=server.ssh_alias,
+                    command_kind=CommandKind.SYSTEM,
+                    target_label="server",
+                    remote_command=_system_command(),
+                    policy=self._command_policies[CommandKind.SYSTEM],
+                    parse_output=parse_system_snapshot,
+                    cache_used=server.server_id in self._system_cache,
+                )
+            )
         if "gpu" in enabled:
-            metric_tasks["gpu"] = asyncio.create_task(self.executor.run(server.ssh_alias, _gpu_command()))
+            metric_tasks["gpu"] = asyncio.create_task(
+                self._execute_with_policy(
+                    server_id=server.server_id,
+                    ssh_alias=server.ssh_alias,
+                    command_kind=CommandKind.GPU,
+                    target_label="server",
+                    remote_command=_gpu_command(),
+                    policy=self._command_policies[CommandKind.GPU],
+                    parse_output=parse_gpu_snapshot,
+                    cache_used=server.server_id in self._gpu_cache,
+                )
+            )
 
         metric_results: dict[str, object] = {}
         if metric_tasks:
@@ -170,46 +212,44 @@ class DashboardRuntime:
                 metric_results[key] = result
 
         if "system" in metric_results:
-            system_result = metric_results["system"]
-            if system_result.exit_code == 0 and not system_result.error:
-                try:
-                    parsed_system = parse_system_snapshot(system_result.stdout)
-                except Exception as exc:
-                    snapshot["metadata"]["metrics_error"] = f"system parse failed: {exc}"
-                else:
-                    snapshot.update(parsed_system)
-                    self._system_cache[server.server_id] = parsed_system
-                    system_updated_at = now.isoformat()
-                    self._system_last_updated_at[server.server_id] = system_updated_at
-                    self._system_last_poll_ok[server.server_id] = True
-                    snapshot["metadata"]["system_last_updated_at"] = system_updated_at
+            system_execution = metric_results["system"]
+            if system_execution.failure_class == "ok":
+                parsed_system = system_execution.parsed
+                snapshot.update(parsed_system)
+                self._system_cache[server.server_id] = parsed_system
+                system_updated_at = now.isoformat()
+                self._system_last_updated_at[server.server_id] = system_updated_at
+                self._system_last_poll_ok[server.server_id] = True
+                snapshot["metadata"]["system_last_updated_at"] = system_updated_at
+            elif system_execution.failure_class == "parse_error":
+                self._system_last_poll_ok[server.server_id] = False
+                snapshot["metadata"]["metrics_error"] = f"system parse failed: {system_execution.message}"
             else:
-                error_text = system_result.error or system_result.stderr or "system failed"
+                error_text = system_execution.message or "system failed"
                 self._system_last_poll_ok[server.server_id] = False
                 snapshot["metadata"]["metrics_error"] = error_text
-                if _is_ssh_unreachable(system_result):
+                if _is_ssh_unreachable(system_execution.result):
                     snapshot["metadata"]["ssh_error"] = error_text
                     host_unreachable = True
 
         if "gpu" in metric_results:
-            gpu_result = metric_results["gpu"]
-            if gpu_result.exit_code == 0 and not gpu_result.error:
-                try:
-                    parsed_gpus = parse_gpu_snapshot(gpu_result.stdout)
-                except Exception as exc:
-                    snapshot["metadata"]["gpu_error"] = f"gpu parse failed: {exc}"
-                else:
-                    snapshot["gpus"] = parsed_gpus
-                    self._gpu_cache[server.server_id] = parsed_gpus
-                    gpu_updated_at = now.isoformat()
-                    self._gpu_last_updated_at[server.server_id] = gpu_updated_at
-                    self._gpu_last_poll_ok[server.server_id] = True
-                    snapshot["metadata"]["gpu_last_updated_at"] = gpu_updated_at
+            gpu_execution = metric_results["gpu"]
+            if gpu_execution.failure_class == "ok":
+                parsed_gpus = gpu_execution.parsed
+                snapshot["gpus"] = parsed_gpus
+                self._gpu_cache[server.server_id] = parsed_gpus
+                gpu_updated_at = now.isoformat()
+                self._gpu_last_updated_at[server.server_id] = gpu_updated_at
+                self._gpu_last_poll_ok[server.server_id] = True
+                snapshot["metadata"]["gpu_last_updated_at"] = gpu_updated_at
+            elif gpu_execution.failure_class == "parse_error":
+                self._gpu_last_poll_ok[server.server_id] = False
+                snapshot["metadata"]["gpu_error"] = f"gpu parse failed: {gpu_execution.message}"
             else:
-                error_text = gpu_result.error or gpu_result.stderr or "gpu failed"
+                error_text = gpu_execution.message or "gpu failed"
                 self._gpu_last_poll_ok[server.server_id] = False
                 snapshot["metadata"]["gpu_error"] = error_text
-                if _is_ssh_unreachable(gpu_result):
+                if _is_ssh_unreachable(gpu_execution.result):
                     snapshot["metadata"]["ssh_error"] = error_text
                     host_unreachable = True
 
@@ -566,6 +606,148 @@ class DashboardRuntime:
         except TypeError:
             return await self.executor.run(alias, remote_command)
 
+    async def _execute_with_policy(
+        self,
+        *,
+        server_id: str,
+        ssh_alias: str,
+        command_kind: CommandKind,
+        target_label: str,
+        remote_command: str,
+        policy: CommandPolicy,
+        parse_output=None,
+        cache_used: bool,
+    ) -> _PolicyExecutionOutcome:
+        attempt_durations_ms: list[int] = []
+
+        for attempt in range(1, policy.max_attempts + 1):
+            started_at = time.monotonic()
+            result = await self._run_executor(
+                ssh_alias,
+                remote_command,
+                timeout_seconds=policy.timeout_seconds,
+            )
+            measured_duration_ms = int((time.monotonic() - started_at) * 1000)
+            duration_ms = int(getattr(result, "duration_ms", measured_duration_ms))
+            attempt_durations_ms.append(duration_ms)
+
+            if result.exit_code == 0 and not result.error:
+                if parse_output is not None:
+                    try:
+                        parsed = parse_output(result.stdout)
+                    except Exception as exc:
+                        message = str(exc)
+                        self._append_command_health(
+                            CommandHealthRecord(
+                                recorded_at=datetime.now(UTC).isoformat(),
+                                server_id=server_id,
+                                command_kind=command_kind,
+                                target_label=target_label,
+                                ok=False,
+                                failure_class="parse_error",
+                                attempt_count=attempt,
+                                duration_ms=sum(attempt_durations_ms),
+                                attempt_durations_ms=list(attempt_durations_ms),
+                                exit_code=int(getattr(result, "exit_code", -1)),
+                                cooldown_applied=False,
+                                cache_used=cache_used,
+                                message=message,
+                            )
+                        )
+                        return _PolicyExecutionOutcome(
+                            result=result,
+                            parsed=None,
+                            failure_class="parse_error",
+                            attempt_count=attempt,
+                            message=message,
+                        )
+                else:
+                    parsed = None
+
+                self._append_command_health(
+                    CommandHealthRecord(
+                        recorded_at=datetime.now(UTC).isoformat(),
+                        server_id=server_id,
+                        command_kind=command_kind,
+                        target_label=target_label,
+                        ok=True,
+                        failure_class="ok",
+                        attempt_count=attempt,
+                        duration_ms=sum(attempt_durations_ms),
+                        attempt_durations_ms=list(attempt_durations_ms),
+                        exit_code=int(getattr(result, "exit_code", 0)),
+                        cooldown_applied=False,
+                        cache_used=False,
+                        message="",
+                    )
+                )
+                return _PolicyExecutionOutcome(
+                    result=result,
+                    parsed=parsed,
+                    failure_class="ok",
+                    attempt_count=attempt,
+                    message="",
+                )
+
+            failure_class = classify_failure(
+                error=getattr(result, "error", None),
+                stderr=str(getattr(result, "stderr", "")),
+            )
+            message = str(getattr(result, "error", "") or getattr(result, "stderr", "") or command_kind.value)
+            if attempt < policy.max_attempts and _should_retry(policy=policy, failure_class=failure_class):
+                await asyncio.sleep(policy.base_backoff_seconds * attempt)
+                continue
+
+            self._append_command_health(
+                CommandHealthRecord(
+                    recorded_at=datetime.now(UTC).isoformat(),
+                    server_id=server_id,
+                    command_kind=command_kind,
+                    target_label=target_label,
+                    ok=False,
+                    failure_class=failure_class,
+                    attempt_count=attempt,
+                    duration_ms=sum(attempt_durations_ms),
+                    attempt_durations_ms=list(attempt_durations_ms),
+                    exit_code=int(getattr(result, "exit_code", -1)),
+                    cooldown_applied=False,
+                    cache_used=cache_used,
+                    message=message,
+                )
+            )
+            return _PolicyExecutionOutcome(
+                result=result,
+                parsed=None,
+                failure_class=failure_class,
+                attempt_count=attempt,
+                message=message,
+            )
+
+        raise RuntimeError("policy execution exited without result")
+
+    def _append_command_health(self, record: CommandHealthRecord) -> None:
+        key = (record.server_id, record.command_kind.value, record.target_label)
+        history = self._recent_command_health.setdefault(key, [])
+        history.append(record)
+
+    def get_recent_command_health(
+        self,
+        *,
+        server_id: str,
+        command_kind: str | None = None,
+        target_label: str | None = None,
+    ) -> list[dict]:
+        matching: list[dict] = []
+        for (record_server_id, record_command_kind, record_target_label), records in self._recent_command_health.items():
+            if record_server_id != server_id:
+                continue
+            if command_kind is not None and record_command_kind != command_kind:
+                continue
+            if target_label is not None and record_target_label != target_label:
+                continue
+            matching.extend(asdict(record) for record in records)
+        return matching
+
     def _replace_cached_repo(self, *, server_id: str, repo: dict) -> None:
         existing = self._repo_cache.get(server_id, [])
         replaced = False
@@ -695,6 +877,16 @@ def _is_valid_branch_name(branch: str) -> bool:
     if ".." in branch or "@{" in branch:
         return False
     return True
+
+
+def _should_retry(*, policy: CommandPolicy, failure_class: str) -> bool:
+    if failure_class == "timeout":
+        return policy.retry_on_timeout
+    if failure_class == "ssh_unreachable":
+        return policy.retry_on_ssh_error
+    if failure_class == "nonzero_exit":
+        return policy.retry_on_nonzero_exit
+    return False
 
 
 def _build_freshness_entry(

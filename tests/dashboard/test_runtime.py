@@ -259,6 +259,32 @@ class _ClashLocationExecutor:
         return _Result("")
 
 
+class _RetrySystemTimeoutExecutor:
+    def __init__(self):
+        self.calls = []
+        self._system_calls = 0
+
+    async def run(self, alias: str, remote_command: str, timeout_seconds: float | None = None):
+        self.calls.append((alias, remote_command, timeout_seconds))
+        if "CPU=$(top -bn1" in remote_command:
+            self._system_calls += 1
+            if self._system_calls == 1:
+                return _Result("", stderr="timeout", exit_code=-1, error="timeout")
+            return _Result("CPU: 11.0\nMEM: 22.0\nDISK: 33.0\nRX_KBPS: 0\nTX_KBPS: 0")
+        return _Result("")
+
+
+class _SystemParseFailureExecutor:
+    def __init__(self):
+        self.calls = []
+
+    async def run(self, alias: str, remote_command: str, timeout_seconds: float | None = None):
+        self.calls.append((alias, remote_command, timeout_seconds))
+        if "CPU=$(top -bn1" in remote_command:
+            return _Result("CPU: not-a-number\nMEM: 22.0\nDISK: 33.0\nRX_KBPS: 0\nTX_KBPS: 0")
+        return _Result("")
+
+
 def test_ssh_command_executor_uses_dashboard_command_runner():
     from server_monitor.dashboard.command_runner import CommandRunner
     from server_monitor.dashboard.runtime import SshCommandExecutor
@@ -681,6 +707,88 @@ async def test_runtime_polls_git_repos_in_parallel():
     elapsed = time.monotonic() - start
 
     assert elapsed < 0.45
+
+
+@pytest.mark.asyncio
+async def test_runtime_retries_system_timeout_once_before_success():
+    from server_monitor.dashboard.runtime import DashboardRuntime
+    from server_monitor.dashboard.ws_hub import WebSocketHub
+
+    settings = DashboardSettings(
+        metrics_interval_seconds=1.0,
+        status_interval_seconds=10.0,
+        servers=[
+            ServerSettings(
+                server_id="server-system-retry",
+                ssh_alias="srv-system-retry",
+                working_dirs=[],
+                enabled_panels=["system"],
+            )
+        ],
+    )
+
+    hub = WebSocketHub()
+    ws = _FakeWebSocket()
+    await hub.connect(ws)
+    executor = _RetrySystemTimeoutExecutor()
+    runtime = DashboardRuntime(
+        hub=hub,
+        settings_store=_FakeSettingsStore(settings),
+        executor=executor,
+    )
+
+    await runtime.poll_once()
+
+    payload = ws.messages[0]
+    health = runtime.get_recent_command_health(
+        server_id="server-system-retry",
+        command_kind="system",
+        target_label="server",
+    )[0]
+    assert payload["snapshot"]["cpu_percent"] == 11.0
+    assert health["attempt_count"] == 2
+    assert health["failure_class"] == "ok"
+
+
+@pytest.mark.asyncio
+async def test_runtime_does_not_retry_parse_failure():
+    from server_monitor.dashboard.runtime import DashboardRuntime
+    from server_monitor.dashboard.ws_hub import WebSocketHub
+
+    settings = DashboardSettings(
+        metrics_interval_seconds=1.0,
+        status_interval_seconds=10.0,
+        servers=[
+            ServerSettings(
+                server_id="server-system-parse",
+                ssh_alias="srv-system-parse",
+                working_dirs=[],
+                enabled_panels=["system"],
+            )
+        ],
+    )
+
+    hub = WebSocketHub()
+    ws = _FakeWebSocket()
+    await hub.connect(ws)
+    executor = _SystemParseFailureExecutor()
+    runtime = DashboardRuntime(
+        hub=hub,
+        settings_store=_FakeSettingsStore(settings),
+        executor=executor,
+    )
+
+    await runtime.poll_once()
+
+    payload = ws.messages[0]
+    health = runtime.get_recent_command_health(
+        server_id="server-system-parse",
+        command_kind="system",
+        target_label="server",
+    )[0]
+    assert payload["snapshot"]["metadata"]["metrics_error"].startswith("system parse failed:")
+    assert health["attempt_count"] == 1
+    assert health["failure_class"] == "parse_error"
 
 
 def test_metrics_sleep_seconds_compensates_poll_time():
