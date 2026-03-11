@@ -26,4 +26,3 @@ def parse_clash_status(text: str) -> dict[str, bool | str]:
         "ip_location": values.get("ip_location", ""),
         "controller_port": values.get("controller_port", ""),
     }
-

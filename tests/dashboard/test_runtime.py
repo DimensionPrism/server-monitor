@@ -259,6 +259,15 @@ class _ClashLocationExecutor:
         return _Result("")
 
 
+def test_ssh_command_executor_uses_dashboard_command_runner():
+    from server_monitor.dashboard.command_runner import CommandRunner
+    from server_monitor.dashboard.runtime import SshCommandExecutor
+
+    executor = SshCommandExecutor()
+
+    assert isinstance(executor.runner, CommandRunner)
+
+
 @pytest.mark.asyncio
 async def test_runtime_poll_once_broadcasts_agentless_update():
     from server_monitor.dashboard.runtime import DashboardRuntime
@@ -943,6 +952,35 @@ def test_clash_command_includes_bearer_header_for_api_and_ui():
     assert "-lt 400" in cmd
     assert "ip_location=" in cmd
     assert "controller_port=" in cmd
+
+
+def test_clash_command_routes_ip_lookup_via_detected_proxy_port():
+    from server_monitor.dashboard.runtime import _clash_command
+
+    cmd = _clash_command(
+        api_probe_url="http://127.0.0.1:9090/version",
+        ui_probe_url="http://127.0.0.1:9090/ui",
+        secret="mysecret",
+    )
+
+    assert "mixed-port:" in cmd
+    assert "PROXY_URL=" in cmd
+    assert '--proxy "$PROXY_URL"' in cmd
+
+
+def test_clash_command_parses_ip_lookup_fields_in_provider_order():
+    from server_monitor.dashboard.runtime import _clash_command
+
+    cmd = _clash_command(
+        api_probe_url="http://127.0.0.1:9090/version",
+        ui_probe_url="http://127.0.0.1:9090/ui",
+        secret="mysecret",
+    )
+
+    assert "IP_COUNTRY=$(printf '%s\\n' \"$IP_INFO\" | sed -n '1p'" in cmd
+    assert "IP_REGION=$(printf '%s\\n' \"$IP_INFO\" | sed -n '2p'" in cmd
+    assert "IP_CITY=$(printf '%s\\n' \"$IP_INFO\" | sed -n '3p'" in cmd
+    assert "IP_ADDR=$(printf '%s\\n' \"$IP_INFO\" | sed -n '4p'" in cmd
 
 
 @pytest.mark.asyncio

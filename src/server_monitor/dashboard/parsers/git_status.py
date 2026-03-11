@@ -60,4 +60,3 @@ def parse_repo_status(
         "untracked": untracked,
         "last_commit_age_seconds": last_commit_age_seconds,
     }
-

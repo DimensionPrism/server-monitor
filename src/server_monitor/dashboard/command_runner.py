@@ -1,4 +1,4 @@
-"""Async shell command execution for agent collectors."""
+"""Async shell command execution for dashboard SSH polling."""
 
 from __future__ import annotations
 
@@ -55,4 +55,3 @@ class CommandRunner:
                 duration_ms=duration_ms,
                 error="timeout",
             )
-

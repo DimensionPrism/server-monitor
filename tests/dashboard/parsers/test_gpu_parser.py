@@ -6,7 +6,7 @@ def _load(name: str) -> str:
 
 
 def test_parse_nvidia_smi_fixture():
-    from server_monitor.agent.parsers.gpu import parse_gpu_snapshot
+    from server_monitor.dashboard.parsers.gpu import parse_gpu_snapshot
 
     parsed = parse_gpu_snapshot(_load("nvidia_smi_query.txt"))
 

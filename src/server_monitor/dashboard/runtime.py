@@ -7,11 +7,11 @@ from contextlib import suppress
 from datetime import UTC, datetime
 import re
 
-from server_monitor.agent.command_runner import CommandRunner
-from server_monitor.agent.parsers.clash import parse_clash_status
-from server_monitor.agent.parsers.git_status import parse_repo_status
-from server_monitor.agent.parsers.gpu import parse_gpu_snapshot
-from server_monitor.agent.parsers.system import parse_system_snapshot
+from server_monitor.dashboard.command_runner import CommandRunner
+from server_monitor.dashboard.parsers.clash import parse_clash_status
+from server_monitor.dashboard.parsers.git_status import parse_repo_status
+from server_monitor.dashboard.parsers.gpu import parse_gpu_snapshot
+from server_monitor.dashboard.parsers.system import parse_system_snapshot
 from server_monitor.dashboard.normalize import normalize_server_payload
 from server_monitor.dashboard.settings import DashboardSettingsStore, ServerSettings
 from server_monitor.dashboard.terminal_launcher import open_terminal_with_ssh
@@ -807,12 +807,35 @@ def _clash_command(
         "if [ \"$API_CODE\" -ge 200 ] && [ \"$API_CODE\" -lt 400 ]; then echo api_reachable=true; else echo api_reachable=false; fi; "
         "if [ \"$UI_CODE\" -ge 200 ] && [ \"$UI_CODE\" -lt 400 ]; then echo ui_reachable=true; else echo ui_reachable=false; fi; "
         "if [ \"$API_CODE\" -ge 200 ] && [ \"$API_CODE\" -lt 400 ] && [ \"$UI_CODE\" -ge 200 ] && [ \"$UI_CODE\" -lt 400 ]; then echo message=ok; else echo message=probe-error; fi; "
+        "CTRL_PORT=unknown; "
+        "PROXY_URL=; "
+        "for CANDIDATE in "
+        "$HOME/clashctl/resources/runtime.yaml "
+        "$HOME/clash-for-linux-install/resources/runtime.yaml "
+        "; do "
+        "if [ -r \"$CANDIDATE\" ]; then "
+        "CTRL_LINE=$(grep -m1 '^external-controller:' \"$CANDIDATE\" | cut -d: -f2- | tr -d '\"' | tr -d \"'\" | tr -d '\\r' | xargs); "
+        "if [ -n \"$CTRL_LINE\" ]; then "
+        "CTRL_PORT=$(printf '%s' \"$CTRL_LINE\" | awk -F: '{print $NF}' | tr -d '\\r' | xargs); "
+        "fi; "
+        "PROXY_PORT=$(grep -m1 '^mixed-port:' \"$CANDIDATE\" | cut -d: -f2- | tr -d '\\r' | xargs); "
+        "if [ -z \"$PROXY_PORT\" ]; then "
+        "PROXY_PORT=$(grep -m1 '^port:' \"$CANDIDATE\" | cut -d: -f2- | tr -d '\\r' | xargs); "
+        "fi; "
+        "if [ -n \"$PROXY_PORT\" ]; then PROXY_URL=\"http://127.0.0.1:$PROXY_PORT\"; fi; "
+        "if [ -n \"$CTRL_PORT\" ] && [ -n \"$PROXY_URL\" ]; then break; fi; "
+        "fi; "
+        "done; "
         "IP_LOCATION=unknown; "
+        "if [ -n \"$PROXY_URL\" ]; then "
+        "IP_INFO=$(curl -sS --proxy \"$PROXY_URL\" --connect-timeout 1 --max-time 2 'http://ip-api.com/line/?fields=query,country,regionName,city' || true); "
+        "else "
         "IP_INFO=$(curl -sS --connect-timeout 1 --max-time 2 'http://ip-api.com/line/?fields=query,country,regionName,city' || true); "
-        "IP_ADDR=$(printf '%s\\n' \"$IP_INFO\" | sed -n '1p' | tr -d '\\r'); "
-        "IP_COUNTRY=$(printf '%s\\n' \"$IP_INFO\" | sed -n '2p' | tr -d '\\r'); "
-        "IP_REGION=$(printf '%s\\n' \"$IP_INFO\" | sed -n '3p' | tr -d '\\r'); "
-        "IP_CITY=$(printf '%s\\n' \"$IP_INFO\" | sed -n '4p' | tr -d '\\r'); "
+        "fi; "
+        "IP_COUNTRY=$(printf '%s\\n' \"$IP_INFO\" | sed -n '1p' | tr -d '\\r'); "
+        "IP_REGION=$(printf '%s\\n' \"$IP_INFO\" | sed -n '2p' | tr -d '\\r'); "
+        "IP_CITY=$(printf '%s\\n' \"$IP_INFO\" | sed -n '3p' | tr -d '\\r'); "
+        "IP_ADDR=$(printf '%s\\n' \"$IP_INFO\" | sed -n '4p' | tr -d '\\r'); "
         "if [ -n \"$IP_ADDR$IP_COUNTRY$IP_REGION$IP_CITY\" ] && [ \"$IP_ADDR\" != \"fail\" ]; then "
         "IP_LOCATION=\"$IP_CITY\"; "
         "if [ -n \"$IP_REGION\" ]; then IP_LOCATION=\"${IP_LOCATION}, ${IP_REGION}\"; fi; "
@@ -826,19 +849,6 @@ def _clash_command(
         "echo ui_reachable=false; "
         "echo message=curl-missing; "
         "echo ip_location=unknown; "
-        "fi"
-        "; CTRL_PORT=unknown; "
-        "for CANDIDATE in "
-        "$HOME/clashctl/resources/runtime.yaml "
-        "$HOME/clash-for-linux-install/resources/runtime.yaml "
-        "; do "
-        "if [ -r \"$CANDIDATE\" ]; then "
-        "CTRL_LINE=$(grep -m1 '^external-controller:' \"$CANDIDATE\" | cut -d: -f2- | tr -d '\"' | tr -d \"'\" | tr -d '\\r' | xargs); "
-        "if [ -n \"$CTRL_LINE\" ]; then "
-        "CTRL_PORT=$(printf '%s' \"$CTRL_LINE\" | awk -F: '{print $NF}' | tr -d '\\r' | xargs); "
-        "if [ -n \"$CTRL_PORT\" ]; then break; fi; "
         "fi; "
-        "fi; "
-        "done; "
         "echo controller_port=$CTRL_PORT"
     )

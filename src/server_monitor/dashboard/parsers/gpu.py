@@ -28,4 +28,3 @@ def parse_gpu_snapshot(text: str) -> list[dict[str, float | int | str | list]]:
         )
 
     return rows
-

@@ -6,7 +6,7 @@ def _load(name: str) -> str:
 
 
 def test_parse_repo_status_fixture():
-    from server_monitor.agent.parsers.git_status import parse_repo_status
+    from server_monitor.dashboard.parsers.git_status import parse_repo_status
 
     parsed = parse_repo_status(path="/work/repo", porcelain_text=_load("git_porcelain.txt"), last_commit_age_seconds=600)
 

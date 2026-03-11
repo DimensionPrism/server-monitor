@@ -21,4 +21,3 @@ def parse_system_snapshot(text: str) -> dict[str, float]:
         "network_rx_kbps": float(mapping.get("RX_KBPS", 0.0)),
         "network_tx_kbps": float(mapping.get("TX_KBPS", 0.0)),
     }
-
