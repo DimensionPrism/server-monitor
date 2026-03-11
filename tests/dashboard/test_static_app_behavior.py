@@ -284,3 +284,34 @@ def test_selecting_another_server_preserves_unsaved_settings_draft():
         }
         """
     )
+
+
+def test_render_server_summary_uses_active_gpu_count_and_peak_utilization():
+    _run_app_js_test(
+        """
+        if (typeof __testExports.renderServerSummary !== "function") {
+          throw new Error("renderServerSummary missing");
+        }
+
+        const html = __testExports.renderServerSummary(
+          {
+            gpus: [
+              { index: 0, utilization_gpu: 97 },
+              { index: 1, utilization_gpu: 41 },
+              { index: 2, utilization_gpu: 4 },
+            ],
+          },
+          new Set(["gpu"])
+        );
+
+        if (!html.includes("2/3 active")) {
+          throw new Error("gpu summary does not show active/total usage");
+        }
+        if (!html.includes("peak 97%")) {
+          throw new Error("gpu summary does not show peak utilization");
+        }
+        if (html.includes(">97%<")) {
+          throw new Error("gpu summary still uses peak utilization as the primary value");
+        }
+        """
+    )

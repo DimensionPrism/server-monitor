@@ -11,6 +11,7 @@ const state = {
 
 const DEFAULT_CLASH_API_PROBE_URL = "http://127.0.0.1:9090/version";
 const DEFAULT_CLASH_UI_PROBE_URL = "http://127.0.0.1:9090/ui";
+const GPU_ACTIVE_THRESHOLD_PERCENT = 10;
 
 function byId(id) {
   return document.getElementById(id);
@@ -173,12 +174,11 @@ function renderServerSummary(snapshot, panels) {
 
   const gpus = Array.isArray(snapshot.gpus) ? snapshot.gpus : [];
   if (panels.has("gpu")) {
-    const gpuPeak = gpus.reduce((maxValue, gpu) => {
-      const utilization = gpu.utilization_gpu_percent ?? gpu.utilization_gpu;
-      return Math.max(maxValue, clampPercent(utilization));
-    }, 0);
-    const gpuValue = gpus.length > 0 ? `${Math.round(gpuPeak)}%` : "--";
-    const gpuMeta = gpus.length > 0 ? `${gpus.length} GPUs` : "No GPU data";
+    const gpuUtilizations = gpus.map((gpu) => clampPercent(gpu.utilization_gpu_percent ?? gpu.utilization_gpu));
+    const gpuPeak = gpuUtilizations.reduce((maxValue, utilization) => Math.max(maxValue, utilization), 0);
+    const activeGpuCount = gpuUtilizations.filter((utilization) => utilization >= GPU_ACTIVE_THRESHOLD_PERCENT).length;
+    const gpuValue = gpus.length > 0 ? `${activeGpuCount}/${gpus.length} active` : "--";
+    const gpuMeta = gpus.length > 0 ? `peak ${Math.round(gpuPeak)}%` : "No GPU data";
     metrics.push(renderSummaryMetric("GPU", gpuValue, gpuMeta));
   }
 
