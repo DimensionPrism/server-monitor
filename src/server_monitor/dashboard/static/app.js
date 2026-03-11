@@ -186,6 +186,7 @@ function renderGpuPanel(snapshot) {
 function renderClashPanel(serverId, clash) {
   const running = clash && clash.running ? "running" : "stopped";
   const message = clash && clash.message ? clash.message : "--";
+  const ipLocation = clash && clash.ip_location ? clash.ip_location : "--";
   const secret = state.clashSecrets.get(serverId) || "";
   const maskedSecret = secret ? `${"*".repeat(Math.max(0, secret.length - 4))}${secret.slice(-4)}` : "--";
   return `
@@ -193,6 +194,7 @@ function renderClashPanel(serverId, clash) {
     <div class="kv"><span>API</span><strong>${clash && clash.api_reachable ? "reachable" : "unreachable"}</strong></div>
     <div class="kv"><span>UI</span><strong>${clash && clash.ui_reachable ? "reachable" : "unreachable"}</strong></div>
     <div class="kv"><span>Message</span><strong>${escapeHtml(message)}</strong></div>
+    <div class="kv"><span>IP Location</span><strong>${escapeHtml(ipLocation)}</strong></div>
     <div class="kv"><span>Secret</span><strong>${escapeHtml(maskedSecret)}</strong></div>
     <div class="clash-actions">
       <button class="btn-pill" type="button" data-clash-open-ui>Open UI Tunnel</button>

@@ -205,3 +205,4 @@ def test_app_js_wires_clash_ui_tunnel_open_action():
     assert "data-clash-copy-secret" in response.text
     assert "/clash/tunnel/open" in response.text
     assert "auto_login_url" in response.text
+    assert "IP Location" in response.text

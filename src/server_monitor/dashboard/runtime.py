@@ -22,6 +22,7 @@ DEFAULT_CLASH = {
     "api_reachable": False,
     "ui_reachable": False,
     "message": "not-collected",
+    "ip_location": "",
 }
 GIT_OPERATION_TIMEOUT_SECONDS = 20.0
 STATUS_COMMAND_TIMEOUT_SECONDS = 3.0
@@ -789,9 +790,24 @@ def _clash_command(
         "if [ \"$API_CODE\" -ge 200 ] && [ \"$API_CODE\" -lt 400 ]; then echo api_reachable=true; else echo api_reachable=false; fi; "
         "if [ \"$UI_CODE\" -ge 200 ] && [ \"$UI_CODE\" -lt 400 ]; then echo ui_reachable=true; else echo ui_reachable=false; fi; "
         "if [ \"$API_CODE\" -ge 200 ] && [ \"$API_CODE\" -lt 400 ] && [ \"$UI_CODE\" -ge 200 ] && [ \"$UI_CODE\" -lt 400 ]; then echo message=ok; else echo message=probe-error; fi; "
+        "IP_LOCATION=unknown; "
+        "IP_INFO=$(curl -sS --connect-timeout 1 --max-time 2 'http://ip-api.com/line/?fields=query,country,regionName,city' || true); "
+        "IP_ADDR=$(printf '%s\\n' \"$IP_INFO\" | sed -n '1p' | tr -d '\\r'); "
+        "IP_COUNTRY=$(printf '%s\\n' \"$IP_INFO\" | sed -n '2p' | tr -d '\\r'); "
+        "IP_REGION=$(printf '%s\\n' \"$IP_INFO\" | sed -n '3p' | tr -d '\\r'); "
+        "IP_CITY=$(printf '%s\\n' \"$IP_INFO\" | sed -n '4p' | tr -d '\\r'); "
+        "if [ -n \"$IP_ADDR$IP_COUNTRY$IP_REGION$IP_CITY\" ] && [ \"$IP_ADDR\" != \"fail\" ]; then "
+        "IP_LOCATION=\"$IP_CITY\"; "
+        "if [ -n \"$IP_REGION\" ]; then IP_LOCATION=\"${IP_LOCATION}, ${IP_REGION}\"; fi; "
+        "if [ -n \"$IP_COUNTRY\" ]; then IP_LOCATION=\"${IP_LOCATION}, ${IP_COUNTRY}\"; fi; "
+        "if [ -n \"$IP_ADDR\" ]; then IP_LOCATION=\"${IP_LOCATION} (${IP_ADDR})\"; fi; "
+        "IP_LOCATION=$(printf '%s' \"$IP_LOCATION\" | sed 's/^, //; s/^ *//; s/ *$//'); "
+        "fi; "
+        "echo ip_location=$IP_LOCATION; "
         "else "
         "echo api_reachable=false; "
         "echo ui_reachable=false; "
         "echo message=curl-missing; "
+        "echo ip_location=unknown; "
         "fi"
     )

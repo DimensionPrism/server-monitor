@@ -49,6 +49,7 @@ class ClashStatus(BaseModel):
     api_reachable: bool
     ui_reachable: bool
     message: str = ""
+    ip_location: str = ""
 
 
 class ServerSnapshot(BaseModel):

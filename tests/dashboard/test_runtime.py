@@ -239,6 +239,25 @@ class _SecretTimeoutAfterSuccessExecutor:
         return _Result("")
 
 
+class _ClashLocationExecutor:
+    def __init__(self):
+        self.calls = []
+
+    async def run(self, alias: str, remote_command: str, timeout_seconds: float | None = None):
+        self.calls.append((alias, remote_command, timeout_seconds))
+        if "clashsecret" in remote_command:
+            return _Result("😼 当前密钥：mysecret")
+        if "pgrep -f clash" in remote_command:
+            return _Result(
+                "running=true\n"
+                "api_reachable=true\n"
+                "ui_reachable=true\n"
+                "message=ok\n"
+                "ip_location=Los Angeles, California, United States (1.2.3.4)"
+            )
+        return _Result("")
+
+
 @pytest.mark.asyncio
 async def test_runtime_poll_once_broadcasts_agentless_update():
     from server_monitor.dashboard.runtime import DashboardRuntime
@@ -851,6 +870,7 @@ def test_clash_command_includes_bearer_header_for_api_and_ui():
     assert "127.0.0.1:9090/version" in cmd
     assert "127.0.0.1:9090/ui" in cmd
     assert "-lt 400" in cmd
+    assert "ip_location=" in cmd
 
 
 @pytest.mark.asyncio
@@ -992,5 +1012,38 @@ async def test_runtime_keeps_cached_clash_when_secret_command_times_out():
     latest = ws.messages[-1]["clash"]
     assert latest["api_reachable"] is True
     assert latest["ui_reachable"] is True
-    assert latest["message"] == "ok"
+
+
+@pytest.mark.asyncio
+async def test_runtime_clash_payload_contains_ip_location():
+    from server_monitor.dashboard.runtime import DashboardRuntime
+    from server_monitor.dashboard.ws_hub import WebSocketHub
+
+    settings = DashboardSettings(
+        metrics_interval_seconds=1.0,
+        status_interval_seconds=0.0,
+        servers=[
+            ServerSettings(
+                server_id="server-clash-location",
+                ssh_alias="srv-clash-location",
+                working_dirs=[],
+                enabled_panels=["clash"],
+            )
+        ],
+    )
+
+    hub = WebSocketHub()
+    ws = _FakeWebSocket()
+    await hub.connect(ws)
+    runtime = DashboardRuntime(
+        hub=hub,
+        settings_store=_FakeSettingsStore(settings),
+        executor=_ClashLocationExecutor(),
+    )
+
+    await runtime.poll_once()
+
+    payload = ws.messages[0]
+    assert payload["clash"]["ip_location"] == "Los Angeles, California, United States (1.2.3.4)"
+    assert payload["clash"]["message"] == "ok"
     await runtime.stop()

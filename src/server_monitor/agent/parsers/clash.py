@@ -23,5 +23,6 @@ def parse_clash_status(text: str) -> dict[str, bool | str]:
         "api_reachable": _parse_bool(values.get("api_reachable", "false")),
         "ui_reachable": _parse_bool(values.get("ui_reachable", "false")),
         "message": values.get("message", ""),
+        "ip_location": values.get("ip_location", ""),
     }
 
