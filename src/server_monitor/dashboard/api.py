@@ -104,6 +104,12 @@ def _require_open_terminal_runtime(runtime):
     return runtime
 
 
+def _require_diagnostics_runtime(runtime):
+    if runtime is None or not hasattr(runtime, "build_diagnostics_bundle"):
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="diagnostics unavailable")
+    return runtime
+
+
 def _require_clash_tunnel_manager(clash_tunnel_manager):
     if clash_tunnel_manager is None or not hasattr(clash_tunnel_manager, "open_ui_tunnel"):
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="clash tunnel unavailable")
@@ -175,6 +181,11 @@ def create_dashboard_app(
     def get_settings() -> dict:
         store = _require_store(settings_store)
         return _serialize_settings(store.load())
+
+    @app.get("/api/diagnostics")
+    def get_diagnostics() -> dict:
+        diagnostics_runtime = _require_diagnostics_runtime(runtime)
+        return diagnostics_runtime.build_diagnostics_bundle()
 
     @app.post("/api/servers", status_code=status.HTTP_201_CREATED)
     def create_server(payload: ServerPayload) -> dict:

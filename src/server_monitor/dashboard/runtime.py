@@ -855,6 +855,54 @@ class DashboardRuntime:
             matching.extend(asdict(record) for record in records)
         return matching
 
+    def build_diagnostics_bundle(self) -> dict:
+        settings = self.settings_store.load()
+        servers: dict[str, dict] = {}
+
+        for (server_id, command_kind, target_label), records in sorted(self._recent_command_health.items()):
+            server_entry = servers.setdefault(server_id, {"server_id": server_id, "commands": []})
+            recent_outcomes = [
+                {
+                    "recorded_at": record.recorded_at,
+                    "server_id": record.server_id,
+                    "command_kind": record.command_kind.value,
+                    "target_label": record.target_label,
+                    "ok": record.ok,
+                    "failure_class": record.failure_class,
+                    "attempt_count": record.attempt_count,
+                    "duration_ms": record.duration_ms,
+                    "attempt_durations_ms": list(record.attempt_durations_ms),
+                    "exit_code": record.exit_code,
+                    "cooldown_applied": record.cooldown_applied,
+                    "cache_used": record.cache_used,
+                    "message": record.message,
+                }
+                for record in records
+            ]
+            success_count = sum(1 for record in records if record.ok)
+            failure_count = len(records) - success_count
+            avg_duration_ms = int(sum(record.duration_ms for record in records) / len(records)) if records else 0
+            last_failure_class = next((record.failure_class for record in reversed(records) if not record.ok), "ok")
+            server_entry["commands"].append(
+                {
+                    "command_kind": command_kind,
+                    "target_label": target_label,
+                    "recent_outcomes": recent_outcomes,
+                    "summary": {
+                        "success_count": success_count,
+                        "failure_count": failure_count,
+                        "avg_duration_ms": avg_duration_ms,
+                        "last_failure_class": last_failure_class,
+                    },
+                }
+            )
+
+        return {
+            "generated_at": datetime.now(UTC).isoformat(),
+            "settings": _serialize_runtime_settings(settings),
+            "servers": [servers[server_id] for server_id in sorted(servers.keys())],
+        }
+
     def _replace_cached_repo(self, *, server_id: str, repo: dict) -> None:
         existing = self._repo_cache.get(server_id, [])
         replaced = False
@@ -887,6 +935,24 @@ def _find_server(servers: list[ServerSettings], server_id: str) -> ServerSetting
         if server.server_id == server_id:
             return server
     raise KeyError(f"unknown server '{server_id}'")
+
+
+def _serialize_runtime_settings(settings) -> dict:
+    return {
+        "metrics_interval_seconds": settings.metrics_interval_seconds,
+        "status_interval_seconds": settings.status_interval_seconds,
+        "servers": [
+            {
+                "server_id": server.server_id,
+                "ssh_alias": server.ssh_alias,
+                "working_dirs": list(server.working_dirs),
+                "enabled_panels": list(server.enabled_panels),
+                "clash_api_probe_url": server.clash_api_probe_url,
+                "clash_ui_probe_url": server.clash_ui_probe_url,
+            }
+            for server in settings.servers
+        ],
+    }
 
 
 def _is_ssh_unreachable(result) -> bool:
