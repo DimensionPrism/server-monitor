@@ -63,6 +63,29 @@ class _FakeClashTunnelManager:
         }
 
 
+class _SecretProbeResult:
+    def __init__(self, stdout: str, stderr: str = "", exit_code: int = 0, error: str | None = None):
+        self.stdout = stdout
+        self.stderr = stderr
+        self.exit_code = exit_code
+        self.error = error
+
+
+class _SecretProbeExecutor:
+    def __init__(self, stdout: str):
+        self.stdout = stdout
+        self.calls = []
+
+    async def run(self, alias: str, remote_command: str, timeout_seconds: float | None = None):
+        self.calls.append((alias, remote_command, timeout_seconds))
+        return _SecretProbeResult(self.stdout)
+
+
+class _RuntimeWithSecretProbe:
+    def __init__(self, stdout: str):
+        self.executor = _SecretProbeExecutor(stdout)
+
+
 def _make_client(tmp_path, runtime=None, tunnel_manager=None):
     from server_monitor.dashboard.api import create_dashboard_app
     from server_monitor.dashboard.settings import DashboardSettingsStore
@@ -253,6 +276,32 @@ def test_settings_api_clash_tunnel_open_dispatches_to_manager(tmp_path):
     assert tunnel_manager.calls[0]["server_id"] == "srv-clash"
     assert tunnel_manager.calls[0]["ssh_alias"] == "server-clash"
     assert tunnel_manager.calls[0]["clash_ui_probe_url"] == "http://127.0.0.1:9095/ui"
+
+
+def test_settings_api_clash_tunnel_open_returns_secret_and_auto_login_url(tmp_path):
+    tunnel_manager = _FakeClashTunnelManager()
+    runtime = _RuntimeWithSecretProbe("😼 当前密钥：mysecret")
+    client = _make_client(tmp_path, runtime=runtime, tunnel_manager=tunnel_manager)
+
+    client.post(
+        "/api/servers",
+        json={
+            "server_id": "srv-clash-secret",
+            "ssh_alias": "server-clash-secret",
+            "working_dirs": [],
+            "enabled_panels": ["clash"],
+            "clash_ui_probe_url": "http://127.0.0.1:9095/ui",
+        },
+    )
+
+    response = client.post("/api/servers/srv-clash-secret/clash/tunnel/open")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["url"] == "http://127.0.0.1:19100/ui"
+    assert body["secret"] == "mysecret"
+    assert body["auto_login_url"] == "http://127.0.0.1:19100/ui/#/setup?hostname=127.0.0.1&port=19100&secret=mysecret"
+    assert any("clashsecret" in call[1] for call in runtime.executor.calls)
 
 
 def test_settings_api_clash_tunnel_open_requires_manager(tmp_path):

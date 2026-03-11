@@ -749,7 +749,25 @@ def _extract_clash_secret(output: str) -> str | None:
 
 
 def _clash_secret_command() -> str:
-    return "clashsecret"
+    return (
+        "if command -v clashsecret >/dev/null 2>&1; then "
+        "clashsecret; "
+        "elif command -v clashctl >/dev/null 2>&1; then "
+        "clashctl secret; "
+        "else "
+        "for CANDIDATE in "
+        "$HOME/clashctl/resources/runtime.yaml "
+        "$HOME/clash-for-linux-install/resources/runtime.yaml "
+        "; do "
+        "if [ -r \"$CANDIDATE\" ]; then "
+        "SECRET=$(sed -n 's/^secret:[[:space:]]*//p' \"$CANDIDATE\" | head -n1 | tr -d '\\r' | xargs); "
+        "if [ -n \"$SECRET\" ]; then echo \"当前密钥：$SECRET\"; exit 0; fi; "
+        "fi; "
+        "done; "
+        "echo 'secret-unavailable' >&2; "
+        "exit 1; "
+        "fi"
+    )
 
 
 def _clash_command(
@@ -768,9 +786,9 @@ def _clash_command(
         "if command -v curl >/dev/null 2>&1; then "
         "API_CODE=$(curl -sS -o /dev/null -w '%{http_code}' --connect-timeout 1 --max-time 2 -H \"$AUTH_HEADER\" \"$API_URL\" || echo 000); "
         "UI_CODE=$(curl -sS -o /dev/null -w '%{http_code}' --connect-timeout 1 --max-time 2 -H \"$AUTH_HEADER\" \"$UI_URL\" || echo 000); "
-        "if [ \"$API_CODE\" -ge 200 ] && [ \"$API_CODE\" -lt 300 ]; then echo api_reachable=true; else echo api_reachable=false; fi; "
-        "if [ \"$UI_CODE\" -ge 200 ] && [ \"$UI_CODE\" -lt 300 ]; then echo ui_reachable=true; else echo ui_reachable=false; fi; "
-        "if [ \"$API_CODE\" -ge 200 ] && [ \"$API_CODE\" -lt 300 ] && [ \"$UI_CODE\" -ge 200 ] && [ \"$UI_CODE\" -lt 300 ]; then echo message=ok; else echo message=probe-error; fi; "
+        "if [ \"$API_CODE\" -ge 200 ] && [ \"$API_CODE\" -lt 400 ]; then echo api_reachable=true; else echo api_reachable=false; fi; "
+        "if [ \"$UI_CODE\" -ge 200 ] && [ \"$UI_CODE\" -lt 400 ]; then echo ui_reachable=true; else echo ui_reachable=false; fi; "
+        "if [ \"$API_CODE\" -ge 200 ] && [ \"$API_CODE\" -lt 400 ] && [ \"$UI_CODE\" -ge 200 ] && [ \"$UI_CODE\" -lt 400 ]; then echo message=ok; else echo message=probe-error; fi; "
         "else "
         "echo api_reachable=false; "
         "echo ui_reachable=false; "

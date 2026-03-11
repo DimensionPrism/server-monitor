@@ -3,6 +3,7 @@ const state = {
   settings: null,
   gitOps: new Map(),
   panelOpenState: new Map(),
+  clashSecrets: new Map(),
 };
 
 const DEFAULT_CLASH_API_PROBE_URL = "http://127.0.0.1:9090/version";
@@ -182,16 +183,20 @@ function renderGpuPanel(snapshot) {
   return `<div class="gpu-grid">${rows}</div>${renderLastUpdateLine(gpuLastUpdated)}`;
 }
 
-function renderClashPanel(clash) {
+function renderClashPanel(serverId, clash) {
   const running = clash && clash.running ? "running" : "stopped";
   const message = clash && clash.message ? clash.message : "--";
+  const secret = state.clashSecrets.get(serverId) || "";
+  const maskedSecret = secret ? `${"*".repeat(Math.max(0, secret.length - 4))}${secret.slice(-4)}` : "--";
   return `
     <div class="kv"><span>Status</span><strong>${escapeHtml(running)}</strong></div>
     <div class="kv"><span>API</span><strong>${clash && clash.api_reachable ? "reachable" : "unreachable"}</strong></div>
     <div class="kv"><span>UI</span><strong>${clash && clash.ui_reachable ? "reachable" : "unreachable"}</strong></div>
     <div class="kv"><span>Message</span><strong>${escapeHtml(message)}</strong></div>
+    <div class="kv"><span>Secret</span><strong>${escapeHtml(maskedSecret)}</strong></div>
     <div class="clash-actions">
       <button class="btn-pill" type="button" data-clash-open-ui>Open UI Tunnel</button>
+      <button class="btn-pill" type="button" data-clash-copy-secret ${secret ? "" : "disabled"}>Copy Secret</button>
       <span class="muted" data-clash-status></span>
     </div>
     ${renderLastUpdateLine(clash && clash.last_updated_at)}
@@ -299,7 +304,7 @@ function renderMonitor() {
     }
 
     if (panels.has("clash")) {
-      html += renderPanelGroup("Clash", renderClashPanel(update.clash || {}), {
+      html += renderPanelGroup("Clash", renderClashPanel(update.server_id, update.clash || {}), {
         groupClass: "clash",
         open: false,
         serverId: update.server_id,
@@ -383,18 +388,53 @@ async function runGitOperation(serverId, repoPath, operation, branch) {
   renderMonitor();
 }
 
+async function copyTextToClipboard(text) {
+  if (navigator.clipboard && window.isSecureContext) {
+    await navigator.clipboard.writeText(text);
+    return;
+  }
+  const textarea = document.createElement("textarea");
+  textarea.value = text;
+  textarea.setAttribute("readonly", "");
+  textarea.style.position = "absolute";
+  textarea.style.left = "-9999px";
+  document.body.appendChild(textarea);
+  textarea.select();
+  const copied = document.execCommand("copy");
+  document.body.removeChild(textarea);
+  if (!copied) {
+    throw new Error("clipboard unavailable");
+  }
+}
+
 async function openClashUiTunnel(serverId, statusEl) {
   if (statusEl) {
     statusEl.textContent = "Opening...";
   }
   try {
     const response = await api("POST", `/api/servers/${encodeURIComponent(serverId)}/clash/tunnel/open`);
+    const secret = response && typeof response.secret === "string" ? response.secret : "";
+    if (secret) {
+      state.clashSecrets.set(serverId, secret);
+    }
+
+    let statusMessage = response && response.reused ? "Tunnel reused" : "Tunnel opened";
+    if (secret) {
+      try {
+        await copyTextToClipboard(secret);
+        statusMessage += " · secret copied";
+      } catch (_) {
+        statusMessage += " · use Copy Secret";
+      }
+    }
     if (statusEl) {
-      statusEl.textContent = response && response.reused ? "Tunnel reused" : "Tunnel opened";
+      statusEl.textContent = statusMessage;
     }
-    if (response && response.url) {
-      window.open(response.url, "_blank", "noopener");
+    const targetUrl = response && (response.auto_login_url || response.url);
+    if (targetUrl) {
+      window.open(targetUrl, "_blank", "noopener");
     }
+    renderMonitor();
   } catch (err) {
     if (statusEl) {
       statusEl.textContent = `Open failed: ${err.message}`;
@@ -428,8 +468,8 @@ function bindGitControlEvents() {
 }
 
 function bindClashControlEvents() {
-  const buttons = document.querySelectorAll("button[data-clash-open-ui]");
-  buttons.forEach((button) => {
+  const openButtons = document.querySelectorAll("button[data-clash-open-ui]");
+  openButtons.forEach((button) => {
     if (button.dataset.bound === "1") {
       return;
     }
@@ -445,6 +485,42 @@ function bindClashControlEvents() {
         return;
       }
       await openClashUiTunnel(serverId, statusEl);
+    });
+  });
+
+  const copyButtons = document.querySelectorAll("button[data-clash-copy-secret]");
+  copyButtons.forEach((button) => {
+    if (button.dataset.bound === "1") {
+      return;
+    }
+    button.dataset.bound = "1";
+    button.addEventListener("click", async () => {
+      const card = button.closest(".server-card");
+      const serverId = card ? card.getAttribute("data-server-id") : "";
+      const statusEl = button.parentElement ? button.parentElement.querySelector("[data-clash-status]") : null;
+      if (!serverId) {
+        if (statusEl) {
+          statusEl.textContent = "Copy failed: missing server id";
+        }
+        return;
+      }
+      const secret = state.clashSecrets.get(serverId) || "";
+      if (!secret) {
+        if (statusEl) {
+          statusEl.textContent = "No secret yet. Open UI tunnel first.";
+        }
+        return;
+      }
+      try {
+        await copyTextToClipboard(secret);
+        if (statusEl) {
+          statusEl.textContent = "Secret copied";
+        }
+      } catch (err) {
+        if (statusEl) {
+          statusEl.textContent = `Copy failed: ${err.message}`;
+        }
+      }
     });
   });
 }

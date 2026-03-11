@@ -90,7 +90,7 @@ def test_app_js_nested_sections_have_expected_default_open_state():
     assert 'renderPanelGroup("System", renderSystemPanel(snapshot), {' in response.text
     assert 'renderPanelGroup("GPU", renderGpuPanel(snapshot), {' in response.text
     assert 'renderPanelGroup("Git", renderGitPanel(update), {' in response.text
-    assert 'renderPanelGroup("Clash", renderClashPanel(update.clash || {}), {' in response.text
+    assert 'renderPanelGroup("Clash", renderClashPanel(update.server_id, update.clash || {}), {' in response.text
     assert "summaryBadgeHtml: renderFreshnessBadge(freshness.system)" in response.text
     assert "summaryBadgeHtml: renderFreshnessBadge(freshness.gpu)" in response.text
     assert "summaryBadgeHtml: renderFreshnessBadge(freshness.git)" in response.text
@@ -202,4 +202,6 @@ def test_app_js_wires_clash_ui_tunnel_open_action():
 
     assert response.status_code == 200
     assert "data-clash-open-ui" in response.text
+    assert "data-clash-copy-secret" in response.text
     assert "/clash/tunnel/open" in response.text
+    assert "auto_login_url" in response.text

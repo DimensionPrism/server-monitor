@@ -829,6 +829,15 @@ def test_extract_clash_secret_parses_chinese_label_output():
     assert _extract_clash_secret(text) == "mysecret"
 
 
+def test_clash_secret_command_includes_runtime_yaml_fallback():
+    from server_monitor.dashboard.runtime import _clash_secret_command
+
+    cmd = _clash_secret_command()
+    assert "clashsecret" in cmd
+    assert "runtime.yaml" in cmd
+    assert "当前密钥" in cmd
+
+
 def test_clash_command_includes_bearer_header_for_api_and_ui():
     from server_monitor.dashboard.runtime import _clash_command
 
@@ -841,6 +850,7 @@ def test_clash_command_includes_bearer_header_for_api_and_ui():
     assert cmd.count("-H \"$AUTH_HEADER\"") >= 2
     assert "127.0.0.1:9090/version" in cmd
     assert "127.0.0.1:9090/ui" in cmd
+    assert "-lt 400" in cmd
 
 
 @pytest.mark.asyncio

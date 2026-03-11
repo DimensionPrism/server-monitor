@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 from pathlib import Path
+from urllib.parse import urlencode, urlparse, urlunparse
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, status
 from fastapi.responses import FileResponse
@@ -97,6 +98,50 @@ def _require_clash_tunnel_manager(clash_tunnel_manager):
     if clash_tunnel_manager is None or not hasattr(clash_tunnel_manager, "open_ui_tunnel"):
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="clash tunnel unavailable")
     return clash_tunnel_manager
+
+
+async def _try_read_clash_secret(*, runtime, ssh_alias: str) -> str | None:
+    if runtime is None or not hasattr(runtime, "executor"):
+        return None
+    executor = runtime.executor
+    if executor is None or not hasattr(executor, "run"):
+        return None
+
+    from server_monitor.dashboard.runtime import STATUS_COMMAND_TIMEOUT_SECONDS, _clash_secret_command, _extract_clash_secret
+
+    secret_command = _clash_secret_command()
+    try:
+        try:
+            result = await executor.run(ssh_alias, secret_command, timeout_seconds=STATUS_COMMAND_TIMEOUT_SECONDS)
+        except TypeError:
+            result = await executor.run(ssh_alias, secret_command)
+    except Exception:
+        return None
+
+    if result.exit_code != 0 or result.error:
+        return None
+    return _extract_clash_secret(result.stdout)
+
+
+def _build_clash_auto_login_url(*, tunnel_url: str, secret: str) -> str | None:
+    if not tunnel_url or not secret:
+        return None
+    parsed = urlparse(tunnel_url)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        return None
+
+    port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    path = parsed.path or "/"
+    if not path.endswith("/"):
+        path = f"{path}/"
+    fragment = "/setup?" + urlencode(
+        {
+            "hostname": parsed.hostname,
+            "port": str(port),
+            "secret": secret,
+        }
+    )
+    return urlunparse((parsed.scheme, parsed.netloc, path, "", "", fragment))
 
 
 def create_dashboard_app(
@@ -221,11 +266,18 @@ def create_dashboard_app(
         settings = store.load()
         server = _find_server(settings, server_id)
         try:
-            return await clash_manager.open_ui_tunnel(
+            opened = await clash_manager.open_ui_tunnel(
                 server_id=server.server_id,
                 ssh_alias=server.ssh_alias,
                 clash_ui_probe_url=server.clash_ui_probe_url,
             )
+            secret = await _try_read_clash_secret(runtime=runtime, ssh_alias=server.ssh_alias)
+            if secret:
+                opened["secret"] = secret
+                auto_login_url = _build_clash_auto_login_url(tunnel_url=str(opened.get("url", "")), secret=secret)
+                if auto_login_url:
+                    opened["auto_login_url"] = auto_login_url
+            return opened
         except ValueError as exc:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
         except RuntimeError as exc:
