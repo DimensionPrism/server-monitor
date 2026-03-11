@@ -1,6 +1,7 @@
 const state = {
   updates: new Map(),
   settings: null,
+  selectedSettingsServerId: null,
   gitOps: new Map(),
   panelOpenState: new Map(),
   clashSecrets: new Map(),
@@ -677,6 +678,28 @@ function serverEditorTemplate(server) {
   `;
 }
 
+function serverOverviewRowTemplate(server, isSelected) {
+  const panelBadges = (server.enabled_panels || [])
+    .map((panel) => `<span class="badge">${escapeHtml(panel)}</span>`)
+    .join("");
+  const workingDirCount = Array.isArray(server.working_dirs) ? server.working_dirs.length : 0;
+  const clashConfigured = server.clash_api_probe_url || server.clash_ui_probe_url ? "configured" : "default";
+  const selectedClass = isSelected ? " selected" : "";
+  return `
+    <button class="settings-overview-row${selectedClass}" type="button" data-role="select-server" data-server-id="${escapeHtml(server.server_id)}">
+      <span class="settings-overview-main">
+        <strong>${escapeHtml(server.server_id)}</strong>
+        <span class="muted">${escapeHtml(server.ssh_alias)}</span>
+      </span>
+      <span class="settings-overview-meta">
+        <span class="badge">${workingDirCount} dirs</span>
+        <span class="badge">${escapeHtml(clashConfigured)} probes</span>
+        ${panelBadges}
+      </span>
+    </button>
+  `;
+}
+
 function bindServerEditorEvents() {
   const editors = document.querySelectorAll(".server-editor");
   editors.forEach((editor) => {
@@ -709,6 +732,9 @@ function bindServerEditorEvents() {
     editor.querySelector('[data-action="delete"]').addEventListener("click", async () => {
       try {
         await api("DELETE", `/api/servers/${serverId}`);
+        if (state.selectedSettingsServerId === serverId) {
+          state.selectedSettingsServerId = null;
+        }
         await loadSettings();
       } catch (err) {
         statusEl.textContent = `Delete failed: ${err.message}`;
@@ -717,17 +743,67 @@ function bindServerEditorEvents() {
   });
 }
 
-function renderSettings() {
-  const list = byId("settings-list");
-  const servers = (state.settings && state.settings.servers) || [];
+function bindSettingsOverviewEvents() {
+  const rows = document.querySelectorAll("button[data-role=\"select-server\"]");
+  rows.forEach((row) => {
+    if (row.dataset.bound === "1") {
+      return;
+    }
+    row.dataset.bound = "1";
+    row.addEventListener("click", () => {
+      const serverId = row.getAttribute("data-server-id");
+      if (!serverId) {
+        return;
+      }
+      state.selectedSettingsServerId = serverId;
+      renderSettings();
+    });
+  });
+}
 
-  if (servers.length === 0) {
-    list.innerHTML = '<p class="muted">No servers configured yet.</p>';
+function renderSettingsOverview(servers) {
+  const overview = byId("settings-overview");
+  if (!overview) {
     return;
   }
+  if (servers.length === 0) {
+    overview.innerHTML = '<p class="muted">No servers configured yet.</p>';
+    return;
+  }
+  overview.innerHTML = servers
+    .map((server) => serverOverviewRowTemplate(server, server.server_id === state.selectedSettingsServerId))
+    .join("\n");
+  bindSettingsOverviewEvents();
+}
 
-  list.innerHTML = servers.map(serverEditorTemplate).join("\n");
+function renderSettingsEditorPanel(servers) {
+  const panel = byId("settings-editor-panel");
+  if (!panel) {
+    return;
+  }
+  const selectedServer = servers.find((server) => server.server_id === state.selectedSettingsServerId);
+  if (!selectedServer) {
+    panel.innerHTML = '<p class="muted">Select a server to edit its settings.</p>';
+    return;
+  }
+  panel.innerHTML = serverEditorTemplate(selectedServer);
   bindServerEditorEvents();
+}
+
+function renderSettings() {
+  const servers = (state.settings && state.settings.servers) || [];
+
+  if (servers.length > 0) {
+    const selectedExists = servers.some((server) => server.server_id === state.selectedSettingsServerId);
+    if (!selectedExists) {
+      state.selectedSettingsServerId = servers[0].server_id;
+    }
+  } else {
+    state.selectedSettingsServerId = null;
+  }
+
+  renderSettingsOverview(servers);
+  renderSettingsEditorPanel(servers);
 }
 
 async function loadSettings() {
@@ -758,6 +834,7 @@ function bindAddServerForm() {
       clash_api_probe_url: clashApiProbeUrl,
       clash_ui_probe_url: clashUiProbeUrl,
     });
+    state.selectedSettingsServerId = serverId;
 
     form.reset();
     byId("new-clash-api-probe-url").value = DEFAULT_CLASH_API_PROBE_URL;
