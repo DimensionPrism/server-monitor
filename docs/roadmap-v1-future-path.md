@@ -17,7 +17,10 @@
 - Landed: summary-first monitor cards tuned for 1-4 server daily scanning.
 - Landed: collapsed cards show metrics only; detail panels remain opt-in.
 - Landed: GPU card summaries now show active/total devices plus peak utilization for multi-GPU hosts.
-- Landed: Settings uses add-first, overview-first, focused editing instead of a full stack of editors.
+- Landed: premium monitor styling adds stronger semantic color, richer surfaces, and motion without changing the summary-first information model.
+- Landed: GPU heat cues stay local to GPU contexts instead of escalating the full server card.
+- Landed: Settings now uses a split workspace with overview rail, grouped editor cards, and a sticky save/delete footer.
+- Landed: the `Add Server` form opens by default for first-run setup, then collapses behind an `Add Server` button once saved servers exist.
 
 ## Short-Term TODO (1-3 weeks)
 

@@ -24,10 +24,12 @@ Local dashboard for monitoring remote GPU servers over SSH aliases in a single b
 - Git repo card action:
   - `Open in Terminal` (opens a local terminal into the selected remote repo via SSH)
 - Interactive settings UI:
-  - add-first server form with overview-first navigation
+  - premium split settings workspace with overview-first navigation
+  - `Add Server` form expands for first-run setup, then collapses behind an `Add Server` button once servers exist
   - create/edit/delete servers
   - create/edit/delete working directories
-  - focused single-server editor with draft preservation while switching rows
+  - focused single-server editor with grouped cards and draft preservation while switching rows
+  - sticky action footer with stronger `Save`/`Delete` hierarchy
   - toggle built-in panels per server (`system`, `gpu`, `git`, `clash`)
 
 ## Requirements
@@ -87,7 +89,7 @@ Notes:
 - Runtime loads `config/servers.toml` by default.
 - Override settings path with:
   - `SERVER_MONITOR_SETTINGS_PATH=/path/to/servers.toml`
-- You can also manage most settings directly from the browser Settings tab with add, overview, and focused edit flows.
+- You can also manage most settings directly from the browser Settings tab with add/reopen, overview, and focused edit flows.
 - Git operations are restricted to repo paths declared in each server's `working_dirs`.
 - No destructive git commands are exposed in the UI/API.
 - Clash panel can open/reuse a local SSH forward and launch the remote Clash UI in a browser tab.
