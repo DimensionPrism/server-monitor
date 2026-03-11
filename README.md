@@ -15,6 +15,8 @@ Local dashboard for monitoring remote GPU servers over SSH aliases in a single b
   - auto-construct setup/login URL after tunnel open
   - copy Clash secret from card (`Copy Secret`)
   - secret probe fallback (`clashsecret` -> `clashctl secret` -> `runtime.yaml`)
+- Policy-driven polling retries with short cooldowns for repeated command failures
+- Exportable diagnostics bundle at `GET /api/diagnostics`
 - Live WebSocket updates in dashboard
 - Git safe operations from dashboard Git panel:
   - `refresh`
@@ -96,6 +98,8 @@ Notes:
 - Clash tunnel-open now returns secret/login context; UI will auto-open setup URL when available and try to copy secret to clipboard.
 - Status polling now runs on a non-blocking background path so stalled SSH status commands no longer block dashboard cycles or overwrite the last good Clash snapshot on transient secret command failures.
 - Clash reachability treats HTTP redirects (`3xx`) as reachable to support `/ui` -> `/ui/` style responses.
+- Recent command health is kept in memory so repeated transient failures can retry in a bounded way and briefly cool down before the next attempt.
+- `GET /api/diagnostics` returns a redaction-safe JSON bundle of current settings and recent command outcomes for debugging/sharing.
 
 ## Testing
 
