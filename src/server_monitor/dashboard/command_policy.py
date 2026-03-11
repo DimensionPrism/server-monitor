@@ -149,4 +149,5 @@ def redact_sensitive_text(text: str) -> str:
 
     redacted = re.sub(r"(authorization:\s*bearer\s+)\S+", r"\1[REDACTED]", text, flags=re.IGNORECASE)
     redacted = re.sub(r"(secret\s*[:=]\s*)\S+", r"\1[REDACTED]", redacted, flags=re.IGNORECASE)
+    redacted = re.sub(r"(当前密钥\s*[:：]\s*)\S+", r"\1[REDACTED]", redacted, flags=re.IGNORECASE)
     return redacted

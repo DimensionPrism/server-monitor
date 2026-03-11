@@ -234,15 +234,9 @@ class DashboardRuntime:
                 self._system_last_updated_at[server.server_id] = system_updated_at
                 self._system_last_poll_ok[server.server_id] = True
                 snapshot["metadata"]["system_last_updated_at"] = system_updated_at
-                if system_execution.had_host_unreachable:
-                    snapshot["metadata"]["ssh_error"] = system_execution.host_unreachable_message or "timeout"
-                    host_unreachable = True
             elif system_execution.failure_class == "parse_error":
                 self._system_last_poll_ok[server.server_id] = False
                 snapshot["metadata"]["metrics_error"] = f"system parse failed: {system_execution.message}"
-                if system_execution.had_host_unreachable:
-                    snapshot["metadata"]["ssh_error"] = system_execution.host_unreachable_message or "timeout"
-                    host_unreachable = True
             else:
                 error_text = system_execution.message or "system failed"
                 self._system_last_poll_ok[server.server_id] = False
@@ -261,15 +255,9 @@ class DashboardRuntime:
                 self._gpu_last_updated_at[server.server_id] = gpu_updated_at
                 self._gpu_last_poll_ok[server.server_id] = True
                 snapshot["metadata"]["gpu_last_updated_at"] = gpu_updated_at
-                if gpu_execution.had_host_unreachable:
-                    snapshot["metadata"]["ssh_error"] = gpu_execution.host_unreachable_message or "timeout"
-                    host_unreachable = True
             elif gpu_execution.failure_class == "parse_error":
                 self._gpu_last_poll_ok[server.server_id] = False
                 snapshot["metadata"]["gpu_error"] = f"gpu parse failed: {gpu_execution.message}"
-                if gpu_execution.had_host_unreachable:
-                    snapshot["metadata"]["ssh_error"] = gpu_execution.host_unreachable_message or "timeout"
-                    host_unreachable = True
             else:
                 error_text = gpu_execution.message or "gpu failed"
                 self._gpu_last_poll_ok[server.server_id] = False

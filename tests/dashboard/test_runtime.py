@@ -49,15 +49,13 @@ class _FakeExecutor:
         return _Result("CPU: 11.0\nMEM: 22.0\nDISK: 33.0\nRX_KBPS: 0\nTX_KBPS: 0")
 
 
-class _FailFirstExecutor:
+class _HostUnreachableExecutor:
     def __init__(self):
         self.calls = []
 
     async def run(self, alias: str, remote_command: str):
         self.calls.append((alias, remote_command))
-        if len(self.calls) == 1:
-            return _Result("", stderr="ssh timeout", exit_code=255, error="timeout")
-        return _Result("unexpected")
+        return _Result("", stderr="ssh timeout", exit_code=255, error="timeout")
 
 
 class _GitOpExecutor:
@@ -311,6 +309,27 @@ class _GitStatusCooldownExecutor:
         return _Result("")
 
 
+class _RecoveredSystemRetryExecutor:
+    def __init__(self):
+        self.calls = []
+        self._system_calls = 0
+
+    async def run(self, alias: str, remote_command: str, timeout_seconds: float | None = None):
+        self.calls.append((alias, remote_command, timeout_seconds))
+        if "CPU=$(top -bn1" in remote_command:
+            self._system_calls += 1
+            if self._system_calls == 1:
+                return _Result("", stderr="timeout", exit_code=-1, error="timeout")
+            return _Result("CPU: 11.0\nMEM: 22.0\nDISK: 33.0\nRX_KBPS: 0\nTX_KBPS: 0")
+        if "git -C" in remote_command:
+            return _Result("## main...origin/main\n")
+        if "clashsecret" in remote_command:
+            return _Result("😼 当前密钥：mysecret")
+        if "pgrep -f clash" in remote_command:
+            return _Result("running=true\napi_reachable=true\nui_reachable=true\nmessage=ok")
+        return _Result("")
+
+
 def test_ssh_command_executor_uses_dashboard_command_runner():
     from server_monitor.dashboard.command_runner import CommandRunner
     from server_monitor.dashboard.runtime import SshCommandExecutor
@@ -409,7 +428,7 @@ async def test_runtime_short_circuits_when_ssh_unreachable():
     hub = WebSocketHub()
     ws = _FakeWebSocket()
     await hub.connect(ws)
-    executor = _FailFirstExecutor()
+    executor = _HostUnreachableExecutor()
 
     runtime = DashboardRuntime(
         hub=hub,
@@ -419,7 +438,7 @@ async def test_runtime_short_circuits_when_ssh_unreachable():
 
     await runtime.poll_once()
 
-    assert len(executor.calls) <= 3
+    assert len(executor.calls) <= 4
     assert not any("git -C" in call[1] for call in executor.calls)
     assert not any("pgrep -f clash" in call[1] for call in executor.calls)
     assert ws.messages[0]["snapshot"]["metadata"]["ssh_error"] != ""
@@ -919,6 +938,42 @@ async def test_runtime_keeps_cached_git_repo_during_cooldown():
     )
     assert payload["repos"][0]["path"] == "/work/repo-a"
     assert health[-1]["failure_class"] == "cooldown_skip"
+
+
+@pytest.mark.asyncio
+async def test_runtime_runs_status_poll_when_system_retry_recovers():
+    from server_monitor.dashboard.runtime import DashboardRuntime
+    from server_monitor.dashboard.ws_hub import WebSocketHub
+
+    settings = DashboardSettings(
+        metrics_interval_seconds=1.0,
+        status_interval_seconds=0.0,
+        servers=[
+            ServerSettings(
+                server_id="server-recovered-status",
+                ssh_alias="srv-recovered-status",
+                working_dirs=["/work/repo-a"],
+                enabled_panels=["system", "git", "clash"],
+            )
+        ],
+    )
+
+    hub = WebSocketHub()
+    ws = _FakeWebSocket()
+    await hub.connect(ws)
+    executor = _RecoveredSystemRetryExecutor()
+    runtime = DashboardRuntime(
+        hub=hub,
+        settings_store=_FakeSettingsStore(settings),
+        executor=executor,
+    )
+
+    await runtime.poll_once()
+
+    payload = ws.messages[0]
+    assert payload["snapshot"]["metadata"].get("ssh_error") is None
+    assert any("clashsecret" in call[1] for call in executor.calls)
+    assert any("git -C" in call[1] for call in executor.calls)
 
 
 def test_metrics_sleep_seconds_compensates_poll_time():

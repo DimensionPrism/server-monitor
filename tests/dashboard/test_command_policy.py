@@ -53,3 +53,9 @@ def test_command_health_record_omits_raw_command_text():
     )
 
     assert "mysecret" not in record.message
+
+
+def test_redact_sensitive_text_masks_chinese_secret_label():
+    text = "当前密钥：mysecret"
+
+    assert "mysecret" not in redact_sensitive_text(text)
