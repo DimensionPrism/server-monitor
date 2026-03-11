@@ -5,8 +5,10 @@ Local dashboard for monitoring remote GPU servers over SSH aliases in a single b
 ## What Works Now
 
 - Agentless monitoring (no remote repo clone/install needed)
+- Summary-first server cards with a metrics-only collapsed state for faster daily scanning
 - System/GPU/Git/Clash snapshot polling over SSH
 - Freshness badges (`LIVE`/`CACHED`) for System/GPU/Git/Clash panels and repo rows
+- Multi-GPU summary signal on each card (`active/total` devices plus `peak` utilization)
 - Secret-aware Clash API/UI reachability checks with configurable probe URLs
 - One-click Clash UI tunnel-open action from the Clash panel
 - Clash UI login assist from dashboard:
@@ -22,8 +24,10 @@ Local dashboard for monitoring remote GPU servers over SSH aliases in a single b
 - Git repo card action:
   - `Open in Terminal` (opens a local terminal into the selected remote repo via SSH)
 - Interactive settings UI:
+  - add-first server form with overview-first navigation
   - create/edit/delete servers
   - create/edit/delete working directories
+  - focused single-server editor with draft preservation while switching rows
   - toggle built-in panels per server (`system`, `gpu`, `git`, `clash`)
 
 ## Requirements
@@ -83,7 +87,7 @@ Notes:
 - Runtime loads `config/servers.toml` by default.
 - Override settings path with:
   - `SERVER_MONITOR_SETTINGS_PATH=/path/to/servers.toml`
-- You can also manage most settings directly from the browser Settings tab.
+- You can also manage most settings directly from the browser Settings tab with add, overview, and focused edit flows.
 - Git operations are restricted to repo paths declared in each server's `working_dirs`.
 - No destructive git commands are exposed in the UI/API.
 - Clash panel can open/reuse a local SSH forward and launch the remote Clash UI in a browser tab.

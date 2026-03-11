@@ -12,6 +12,13 @@
 - Landed: Clash secret probing fallback path for non-interactive SSH shells (`clashsecret`/`clashctl secret`/`runtime.yaml`).
 - Landed: Clash probe success accepts `2xx` and redirect `3xx` responses.
 
+## Current UX Status
+
+- Landed: summary-first monitor cards tuned for 1-4 server daily scanning.
+- Landed: collapsed cards show metrics only; detail panels remain opt-in.
+- Landed: GPU card summaries now show active/total devices plus peak utilization for multi-GPU hosts.
+- Landed: Settings uses add-first, overview-first, focused editing instead of a full stack of editors.
+
 ## Short-Term TODO (1-3 weeks)
 
 1. Add command latency and error-rate telemetry in UI (per server command health strip).
