@@ -89,7 +89,7 @@ Notes:
 
 - `start-dashboard.ps1` runs in background by default.
 - Use `-Foreground` for interactive logs.
-- Background logs: `logs\dashboard.log`.
+- Background logs: `logs\dashboard.log` and `logs\dashboard.stderr.log`.
 
 ## Notes
 

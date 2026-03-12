@@ -103,6 +103,32 @@ class _TimeoutAwareGitExecutor:
         return _Result("ok")
 
 
+class _SlowGitStatusExecutor:
+    def __init__(self):
+        self.calls = []
+
+    async def run(self, alias: str, remote_command: str, timeout_seconds: float | None = None):
+        self.calls.append((alias, remote_command, timeout_seconds))
+        if "status --porcelain --branch" in remote_command:
+            if timeout_seconds is None or timeout_seconds < 5.0:
+                return _Result("", stderr="", exit_code=-1, error="timeout")
+            return _Result("## main...origin/main\n")
+        return _Result("")
+
+
+class _VerySlowGitStatusExecutor:
+    def __init__(self):
+        self.calls = []
+
+    async def run(self, alias: str, remote_command: str, timeout_seconds: float | None = None):
+        self.calls.append((alias, remote_command, timeout_seconds))
+        if "status --porcelain --branch" in remote_command:
+            if timeout_seconds is None or timeout_seconds < 10.0:
+                return _Result("", stderr="", exit_code=-1, error="timeout")
+            return _Result("## main...origin/main\n")
+        return _Result("")
+
+
 class _DelayedExecutor:
     def __init__(self, delay_seconds: float = 0.2):
         self.delay_seconds = delay_seconds
@@ -330,6 +356,24 @@ class _RecoveredSystemRetryExecutor:
         return _Result("")
 
 
+class _ConcurrencyTrackingRunner:
+    def __init__(self, delay_seconds: float = 0.05):
+        self.delay_seconds = delay_seconds
+        self.calls = []
+        self.active_calls = 0
+        self.max_active_calls = 0
+
+    async def run(self, argv: list[str]):
+        self.calls.append(list(argv))
+        self.active_calls += 1
+        self.max_active_calls = max(self.max_active_calls, self.active_calls)
+        try:
+            await asyncio.sleep(self.delay_seconds)
+            return _Result("ok")
+        finally:
+            self.active_calls -= 1
+
+
 def test_ssh_command_executor_uses_dashboard_command_runner():
     from server_monitor.dashboard.command_runner import CommandRunner
     from server_monitor.dashboard.runtime import SshCommandExecutor
@@ -337,6 +381,36 @@ def test_ssh_command_executor_uses_dashboard_command_runner():
     executor = SshCommandExecutor()
 
     assert isinstance(executor.runner, CommandRunner)
+
+
+@pytest.mark.asyncio
+async def test_ssh_command_executor_serializes_commands_per_alias():
+    from server_monitor.dashboard.runtime import SshCommandExecutor
+
+    runner = _ConcurrencyTrackingRunner()
+    executor = SshCommandExecutor(runner=runner)
+
+    await asyncio.gather(
+        executor.run("srv-shared", "echo first"),
+        executor.run("srv-shared", "echo second"),
+    )
+
+    assert runner.max_active_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_ssh_command_executor_allows_parallel_commands_for_different_aliases():
+    from server_monitor.dashboard.runtime import SshCommandExecutor
+
+    runner = _ConcurrencyTrackingRunner()
+    executor = SshCommandExecutor(runner=runner)
+
+    await asyncio.gather(
+        executor.run("srv-a", "echo first"),
+        executor.run("srv-b", "echo second"),
+    )
+
+    assert runner.max_active_calls == 2
 
 
 @pytest.mark.asyncio
@@ -679,6 +753,84 @@ async def test_runtime_git_op_fetch_uses_extended_timeout():
     assert len(fetch_calls) == 1
     assert fetch_calls[0][2] is not None
     assert fetch_calls[0][2] >= 10.0
+
+
+@pytest.mark.asyncio
+async def test_runtime_git_status_poll_uses_extended_timeout():
+    from server_monitor.dashboard.runtime import DashboardRuntime
+    from server_monitor.dashboard.ws_hub import WebSocketHub
+
+    settings = DashboardSettings(
+        metrics_interval_seconds=1.0,
+        status_interval_seconds=0.0,
+        servers=[
+            ServerSettings(
+                server_id="server-git-timeout",
+                ssh_alias="srv-git-timeout",
+                working_dirs=["/work/repo-timeout"],
+                enabled_panels=["git"],
+            )
+        ],
+    )
+
+    hub = WebSocketHub()
+    ws = _FakeWebSocket()
+    await hub.connect(ws)
+    executor = _SlowGitStatusExecutor()
+    runtime = DashboardRuntime(
+        hub=hub,
+        settings_store=_FakeSettingsStore(settings),
+        executor=executor,
+    )
+
+    await runtime.poll_once()
+
+    payload = ws.messages[0]
+    assert payload["repos"][0]["path"] == "/work/repo-timeout"
+    assert payload["command_health"]["git"]["state"] == "healthy"
+    git_calls = [call for call in executor.calls if "status --porcelain --branch" in call[1]]
+    assert len(git_calls) == 1
+    assert git_calls[0][2] is not None
+    assert git_calls[0][2] >= 5.0
+
+
+@pytest.mark.asyncio
+async def test_runtime_git_status_poll_prefers_one_long_attempt_over_short_retries():
+    from server_monitor.dashboard.runtime import DashboardRuntime
+    from server_monitor.dashboard.ws_hub import WebSocketHub
+
+    settings = DashboardSettings(
+        metrics_interval_seconds=1.0,
+        status_interval_seconds=0.0,
+        servers=[
+            ServerSettings(
+                server_id="server-git-slow",
+                ssh_alias="srv-git-slow",
+                working_dirs=["/work/repo-slow"],
+                enabled_panels=["git"],
+            )
+        ],
+    )
+
+    hub = WebSocketHub()
+    ws = _FakeWebSocket()
+    await hub.connect(ws)
+    executor = _VerySlowGitStatusExecutor()
+    runtime = DashboardRuntime(
+        hub=hub,
+        settings_store=_FakeSettingsStore(settings),
+        executor=executor,
+    )
+
+    await runtime.poll_once()
+
+    payload = ws.messages[0]
+    assert payload["repos"][0]["path"] == "/work/repo-slow"
+    assert payload["command_health"]["git"]["state"] == "healthy"
+    git_calls = [call for call in executor.calls if "status --porcelain --branch" in call[1]]
+    assert len(git_calls) == 1
+    assert git_calls[0][2] is not None
+    assert git_calls[0][2] >= 10.0
 
 
 @pytest.mark.asyncio

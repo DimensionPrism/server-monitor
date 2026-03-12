@@ -66,12 +66,15 @@ class SshCommandExecutor:
 
     def __init__(self, *, runner: CommandRunner | None = None) -> None:
         self.runner = runner or CommandRunner(timeout_seconds=3.0)
+        self._alias_locks: dict[str, asyncio.Lock] = {}
 
     async def run(self, alias: str, remote_command: str, timeout_seconds: float | None = None):
         runner = self.runner
         if timeout_seconds is not None and timeout_seconds != self.runner.timeout_seconds:
             runner = CommandRunner(timeout_seconds=timeout_seconds)
-        return await runner.run(["ssh", alias, remote_command])
+        lock = self._alias_locks.setdefault(alias, asyncio.Lock())
+        async with lock:
+            return await runner.run(["ssh", alias, remote_command])
 
 
 class DashboardRuntime:

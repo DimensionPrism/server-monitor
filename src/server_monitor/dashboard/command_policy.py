@@ -91,8 +91,8 @@ def default_command_policies() -> dict[CommandKind, CommandPolicy]:
         CommandKind.SYSTEM: CommandPolicy(timeout_seconds=3.0, max_attempts=2, base_backoff_seconds=0.1),
         CommandKind.GPU: CommandPolicy(timeout_seconds=3.0, max_attempts=2, base_backoff_seconds=0.1),
         CommandKind.GIT_STATUS: CommandPolicy(
-            timeout_seconds=3.0,
-            max_attempts=2,
+            timeout_seconds=10.0,
+            max_attempts=1,
             base_backoff_seconds=0.1,
             retry_on_nonzero_exit=True,
         ),
