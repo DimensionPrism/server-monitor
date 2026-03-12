@@ -1,3 +1,5 @@
+# `metrics_interval_seconds` now governs the runtime loop and freshness thresholds.
+# It does not control `system`/`gpu` sample cadence while metrics streaming is enabled.
 metrics_interval_seconds = 3
 status_interval_seconds = 12
 

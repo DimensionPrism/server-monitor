@@ -31,6 +31,13 @@
 - Landed: lightweight transition-only failure notifications (desktop + optional webhook) from live command health updates.
 - Landed: a user-facing diagnostics export action that packages the existing diagnostics bundle for sharing.
 
+## v1.4 Status
+
+- Landed: agentless continuous SSH streaming for `system` and `gpu` on every configured server.
+- Landed: streamed metrics now keep last-good samples visible across reconnects and age freshness from `LIVE` to `CACHED`.
+- Landed: `git` and `clash` remain on the slower batched status poller.
+- Landed: diagnostics now include per-server `metrics_stream` state, last sample metadata, and reconnect counters.
+
 ## Short-Term TODO (1-3 weeks)
 
 1. Multi-user mode with auth and role-based safe controls (viewer/operator/admin).
@@ -50,5 +57,6 @@
 
 1. `v1.1`: Freshness UX + secret-aware Clash reachability + one-click tunnel open + Clash login assist.
 2. `v1.2`: Reliability and diagnostics (timeouts/retries/health/notifications).
-3. `v1.3`: Historical data + policy controls.
-4. `v2.0`: Multi-user and plugin-oriented architecture.
+3. `v1.4`: Agentless continuous metrics streaming for `system` and `gpu`.
+4. `v1.5`: Historical data + policy controls.
+5. `v2.0`: Multi-user and plugin-oriented architecture.
