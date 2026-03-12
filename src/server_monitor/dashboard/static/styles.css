@@ -126,6 +126,31 @@ main {
   display: block;
 }
 
+.monitor-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+  padding: 0.85rem 1rem;
+  border: 1px solid rgba(153, 190, 221, 0.12);
+  border-radius: 16px;
+  background: linear-gradient(180deg, rgba(12, 20, 31, 0.82), rgba(9, 16, 25, 0.9));
+  box-shadow: var(--shadow-soft);
+}
+
+.monitor-toolbar-actions {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 0.55rem;
+}
+
+.monitor-toolbar-status {
+  min-height: 1.2rem;
+  font-size: 0.8rem;
+}
+
 .server-board {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(430px, 1fr));
@@ -647,10 +672,37 @@ main {
   align-items: start;
 }
 
+.settings-notifications-card,
 .settings-add-card,
 .settings-overview-section,
 .settings-editor-panel {
   padding: 1.25rem;
+}
+
+.settings-notifications-card {
+  border: 1px solid rgba(153, 190, 221, 0.12);
+  border-radius: 18px;
+  background: linear-gradient(180deg, rgba(17, 26, 38, 0.92), rgba(12, 20, 31, 0.96));
+  box-shadow: var(--shadow-card);
+}
+
+.settings-notifications-card .settings-card-head {
+  margin-bottom: 0.85rem;
+}
+
+.settings-notifications-card .settings-form {
+  gap: 0.8rem;
+}
+
+.settings-notifications-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: center;
+}
+
+.settings-notifications-status {
+  min-height: 1.1rem;
 }
 
 .settings-add-card {
@@ -940,6 +992,7 @@ main {
 
   .git-repo-head,
   .server-card-head,
+  .monitor-toolbar,
   .settings-overview-main,
   .settings-editor-footer {
     flex-direction: column;

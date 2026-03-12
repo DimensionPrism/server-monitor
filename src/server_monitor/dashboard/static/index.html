@@ -20,6 +20,13 @@
 
     <main>
       <section id="view-monitor" class="view active">
+        <section class="monitor-toolbar">
+          <div class="monitor-toolbar-actions">
+            <button id="export-diagnostics-btn" class="btn-pill" type="button">Export Diagnostics</button>
+            <button id="notification-permission-btn" class="btn-pill" type="button">Desktop Off</button>
+          </div>
+          <div id="monitor-toolbar-status" class="monitor-toolbar-status muted" aria-live="polite"></div>
+        </section>
         <div id="monitor-grid" class="grid"></div>
       </section>
 
@@ -63,6 +70,8 @@
               <button type="submit">Add Server</button>
             </form>
           </div>
+
+          <div id="settings-notifications-card" class="settings-notifications-card"></div>
 
           <div class="settings-workspace-grid">
             <div class="settings-overview-section settings-overview-rail">

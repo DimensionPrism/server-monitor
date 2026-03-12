@@ -11,7 +11,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from server_monitor.dashboard.settings import DashboardSettings, DashboardSettingsStore, ServerSettings
+from server_monitor.dashboard.settings import DashboardSettings, DashboardSettingsStore, NotificationSettings, ServerSettings
 from server_monitor.dashboard.ws_hub import WebSocketHub
 
 
@@ -48,6 +48,12 @@ class PanelsPayload(BaseModel):
     enabled_panels: list[str]
 
 
+class NotificationSettingsPayload(BaseModel):
+    desktop_enabled: bool = False
+    webhook_enabled: bool = False
+    webhook_url: str = ""
+
+
 class GitOpPayload(BaseModel):
     repo_path: str
     operation: str
@@ -65,6 +71,11 @@ def _serialize_settings(settings: DashboardSettings) -> dict:
     return {
         "metrics_interval_seconds": settings.metrics_interval_seconds,
         "status_interval_seconds": settings.status_interval_seconds,
+        "notifications": {
+            "desktop_enabled": settings.notifications.desktop_enabled,
+            "webhook_enabled": settings.notifications.webhook_enabled,
+            "webhook_url": settings.notifications.webhook_url,
+        },
         "servers": [
             {
                 "server_id": server.server_id,
@@ -180,6 +191,18 @@ def create_dashboard_app(
     @app.get("/api/settings")
     def get_settings() -> dict:
         store = _require_store(settings_store)
+        return _serialize_settings(store.load())
+
+    @app.put("/api/settings/notifications")
+    def update_notification_settings(payload: NotificationSettingsPayload) -> dict:
+        store = _require_store(settings_store)
+        settings = store.load()
+        settings.notifications = NotificationSettings(
+            desktop_enabled=payload.desktop_enabled,
+            webhook_enabled=payload.webhook_enabled,
+            webhook_url=payload.webhook_url,
+        )
+        store.save(settings)
         return _serialize_settings(store.load())
 
     @app.get("/api/diagnostics")

@@ -120,6 +120,14 @@ def _run_app_js_test(js_test: str) -> None:
           Promise,
           JSON,
         }};
+        Object.defineProperty(sandbox, "Notification", {{
+          get() {{
+            return globalThis.Notification;
+          }},
+          set(value) {{
+            globalThis.Notification = value;
+          }},
+        }});
 
         vm.createContext(sandbox);
         vm.runInContext(
@@ -138,6 +146,9 @@ def _run_app_js_test(js_test: str) -> None:
               resetAddServerForm: typeof resetAddServerForm !== "undefined" ? resetAddServerForm : undefined,
               setSettingsAddExpanded: typeof setSettingsAddExpanded !== "undefined" ? setSettingsAddExpanded : undefined,
               renderSettingsAddCard: typeof renderSettingsAddCard !== "undefined" ? renderSettingsAddCard : undefined,
+              exportDiagnostics: typeof exportDiagnostics !== "undefined" ? exportDiagnostics : undefined,
+              saveNotificationSettings: typeof saveNotificationSettings !== "undefined" ? saveNotificationSettings : undefined,
+              processNotificationTransitions: typeof processNotificationTransitions !== "undefined" ? processNotificationTransitions : undefined,
             }};
             `,
           sandbox,
@@ -339,6 +350,162 @@ def test_add_server_card_defaults_open_only_when_no_servers():
         }
         if (existingState !== "collapsed") {
           throw new Error(`expected existing-state add card to be collapsed, got ${existingState}`);
+        }
+        """
+    )
+
+
+def test_render_settings_includes_global_notification_controls():
+    _run_app_js_test(
+        """
+        const card = document.getElementById("settings-notifications-card");
+
+        __testExports.state.settings = {
+          notifications: {
+            desktop_enabled: true,
+            webhook_enabled: false,
+            webhook_url: "https://hooks.example.test/server-monitor",
+          },
+          servers: [],
+        };
+
+        __testExports.renderSettings();
+
+        if (!card.innerHTML.includes("Notification Settings")) {
+          throw new Error("global notifications card missing");
+        }
+        if (!card.innerHTML.includes("https://hooks.example.test/server-monitor")) {
+          throw new Error("notification webhook url missing");
+        }
+        """
+    )
+
+
+def test_export_diagnostics_downloads_json_bundle():
+    _run_app_js_test(
+        """
+        let fetchedUrl = "";
+
+        globalThis.__fetch = async (url) => {
+          fetchedUrl = url;
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({ generated_at: "2026-03-11T15:20:00Z", servers: [] }),
+            text: async () => "",
+          };
+        };
+
+        if (typeof __testExports.exportDiagnostics !== "function") {
+          throw new Error("exportDiagnostics missing");
+        }
+
+        await __testExports.exportDiagnostics();
+
+        if (fetchedUrl !== "/api/diagnostics") {
+          throw new Error(`unexpected diagnostics url: ${fetchedUrl}`);
+        }
+        """
+    )
+
+
+def test_command_health_transition_notifies_only_once_until_recovery():
+    _run_app_js_test(
+        """
+        const sent = [];
+        globalThis.Notification = function(title, options) {
+          sent.push({ title, body: options && options.body ? options.body : "" });
+        };
+        globalThis.Notification.permission = "granted";
+
+        __testExports.state.settings = {
+          notifications: {
+            desktop_enabled: true,
+            webhook_enabled: false,
+            webhook_url: "",
+          },
+          servers: [],
+        };
+
+        if (typeof __testExports.processNotificationTransitions !== "function") {
+          throw new Error("processNotificationTransitions missing");
+        }
+
+        await __testExports.processNotificationTransitions(null, {
+          server_id: "server-a",
+          command_health: {
+            git: { state: "failed", detail: "One or more repos failed", updated_at: "2026-03-11T15:20:00Z" },
+          },
+        });
+        await __testExports.processNotificationTransitions(null, {
+          server_id: "server-a",
+          command_health: {
+            git: { state: "failed", detail: "One or more repos failed", updated_at: "2026-03-11T15:21:00Z" },
+          },
+        });
+        await __testExports.processNotificationTransitions(null, {
+          server_id: "server-a",
+          command_health: {
+            git: { state: "healthy", detail: "All repos healthy", updated_at: "2026-03-11T15:22:00Z" },
+          },
+        });
+        await __testExports.processNotificationTransitions(null, {
+          server_id: "server-a",
+          command_health: {
+            git: { state: "cooldown", detail: "One or more repos are cooling down", updated_at: "2026-03-11T15:23:00Z" },
+          },
+        });
+
+        if (sent.length !== 2) {
+          throw new Error(`expected 2 notifications, got ${sent.length}`);
+        }
+        """
+    )
+
+
+def test_command_health_transition_posts_webhook_payload():
+    _run_app_js_test(
+        """
+        const webhookCalls = [];
+        globalThis.Notification = undefined;
+        globalThis.__fetch = async (url, options = {}) => {
+          webhookCalls.push({ url, options });
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({}),
+            text: async () => "",
+          };
+        };
+
+        __testExports.state.settings = {
+          notifications: {
+            desktop_enabled: false,
+            webhook_enabled: true,
+            webhook_url: "https://hooks.example.test/server-monitor",
+          },
+          servers: [],
+        };
+
+        if (typeof __testExports.processNotificationTransitions !== "function") {
+          throw new Error("processNotificationTransitions missing");
+        }
+
+        await __testExports.processNotificationTransitions(null, {
+          server_id: "server-a",
+          command_health: {
+            clash: { state: "cooldown", detail: "Command cooling down after repeated failures", updated_at: "2026-03-11T15:20:00Z" },
+          },
+        });
+
+        if (webhookCalls.length !== 1) {
+          throw new Error(`expected 1 webhook call, got ${webhookCalls.length}`);
+        }
+        if (webhookCalls[0].url !== "https://hooks.example.test/server-monitor") {
+          throw new Error("webhook url mismatch");
+        }
+        if (!String(webhookCalls[0].options.body).includes("\\"panel\\":\\"clash\\"")) {
+          throw new Error("webhook payload missing panel");
         }
         """
     )

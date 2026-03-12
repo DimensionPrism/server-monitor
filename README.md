@@ -18,6 +18,10 @@ Local dashboard for monitoring remote GPU servers over SSH aliases in a single b
 - Policy-driven polling retries with short cooldowns for repeated command failures
 - Per-card command health strip with latency-first healthy state and retry/cooldown/failure summaries
 - Exportable diagnostics bundle at `GET /api/diagnostics`
+- In-dashboard `Export Diagnostics` action for downloading the diagnostics bundle as JSON
+- Transition-only failure notifications from the dashboard:
+  - desktop/browser notifications when enabled and permission is granted
+  - optional webhook POST on new `failed` or `cooldown` panel transitions
 - Live WebSocket updates in dashboard
 - Git safe operations from dashboard Git panel:
   - `refresh`
@@ -101,6 +105,8 @@ Notes:
 - Clash reachability treats HTTP redirects (`3xx`) as reachable to support `/ui` -> `/ui/` style responses.
 - Recent command health is kept in memory so repeated transient failures can retry in a bounded way and briefly cool down before the next attempt.
 - `GET /api/diagnostics` returns a redaction-safe JSON bundle of current settings and recent command outcomes for debugging/sharing.
+- The monitor toolbar can export the diagnostics bundle directly as a timestamped JSON download.
+- Failure notifications are evaluated in the open browser session from live `command_health` updates and only fire on new degraded transitions.
 
 ## Testing
 

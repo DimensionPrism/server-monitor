@@ -48,6 +48,22 @@ def test_root_serves_add_server_toggle_hooks():
     assert "settings-add-card" in response.text
 
 
+def test_root_serves_monitor_toolbar_and_notifications_card():
+    from server_monitor.dashboard.api import create_dashboard_app
+    from server_monitor.dashboard.ws_hub import WebSocketHub
+
+    app = create_dashboard_app(ws_hub=WebSocketHub())
+    client = TestClient(app)
+
+    response = client.get("/")
+
+    assert response.status_code == 200
+    assert "monitor-toolbar" in response.text
+    assert "export-diagnostics-btn" in response.text
+    assert "notification-permission-btn" in response.text
+    assert "settings-notifications-card" in response.text
+
+
 def test_app_js_includes_safe_git_ops_controls():
     from server_monitor.dashboard.api import create_dashboard_app
     from server_monitor.dashboard.ws_hub import WebSocketHub
@@ -379,6 +395,22 @@ def test_app_js_wires_clash_probe_url_settings_fields():
     assert "clash_ui_probe_url" in response.text
 
 
+def test_app_js_wires_notifications_and_diagnostics_toolbar_hooks():
+    from server_monitor.dashboard.api import create_dashboard_app
+    from server_monitor.dashboard.ws_hub import WebSocketHub
+
+    app = create_dashboard_app(ws_hub=WebSocketHub())
+    client = TestClient(app)
+
+    response = client.get("/static/app.js")
+
+    assert response.status_code == 200
+    assert "function saveNotificationSettings" in response.text
+    assert "function exportDiagnostics" in response.text
+    assert "/api/settings/notifications" in response.text
+    assert "/api/diagnostics" in response.text
+
+
 def test_app_js_wires_clash_ui_tunnel_open_action():
     from server_monitor.dashboard.api import create_dashboard_app
     from server_monitor.dashboard.ws_hub import WebSocketHub
@@ -410,3 +442,18 @@ def test_app_js_wires_git_open_terminal_action():
     assert response.status_code == 200
     assert "data-git-open-terminal" in response.text
     assert "/git/open-terminal" in response.text
+
+
+def test_styles_css_has_monitor_toolbar_and_notifications_card_rules():
+    from server_monitor.dashboard.api import create_dashboard_app
+    from server_monitor.dashboard.ws_hub import WebSocketHub
+
+    app = create_dashboard_app(ws_hub=WebSocketHub())
+    client = TestClient(app)
+
+    response = client.get("/static/styles.css")
+
+    assert response.status_code == 200
+    assert ".monitor-toolbar" in response.text
+    assert ".monitor-toolbar-status" in response.text
+    assert ".settings-notifications-card" in response.text

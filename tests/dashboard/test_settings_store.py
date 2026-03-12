@@ -128,3 +128,36 @@ def test_settings_store_saves_clash_probe_urls(tmp_path: Path):
     written_text = path.read_text(encoding="utf-8")
     assert 'clash_api_probe_url = "http://127.0.0.1:9099/version"' in written_text
     assert 'clash_ui_probe_url = "http://127.0.0.1:9099/ui"' in written_text
+
+
+def test_settings_store_defaults_notification_settings(tmp_path: Path):
+    from server_monitor.dashboard.settings import DashboardSettingsStore
+
+    store = DashboardSettingsStore(tmp_path / "servers.toml")
+
+    loaded = store.load()
+
+    assert loaded.notifications.desktop_enabled is False
+    assert loaded.notifications.webhook_enabled is False
+    assert loaded.notifications.webhook_url == ""
+
+
+def test_settings_store_round_trips_notification_settings(tmp_path: Path):
+    from server_monitor.dashboard.settings import DashboardSettings, DashboardSettingsStore, NotificationSettings
+
+    store = DashboardSettingsStore(tmp_path / "servers.toml")
+    store.save(
+        DashboardSettings(
+            notifications=NotificationSettings(
+                desktop_enabled=True,
+                webhook_enabled=True,
+                webhook_url="https://hooks.example.test/server-monitor",
+            )
+        )
+    )
+
+    loaded = store.load()
+
+    assert loaded.notifications.desktop_enabled is True
+    assert loaded.notifications.webhook_enabled is True
+    assert loaded.notifications.webhook_url == "https://hooks.example.test/server-monitor"

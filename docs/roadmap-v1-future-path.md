@@ -28,13 +28,13 @@
 - Landed: policy-driven retry, bounded backoff, short cooldowns, and recent command health journaling in the poller runtime.
 - Landed: redaction-safe diagnostics bundle backend at `GET /api/diagnostics`.
 - Landed: command latency/error-state telemetry in the monitor UI via the per-card command health strip.
-- Remaining: lightweight failure notifications.
-- Remaining: a user-facing diagnostics export action that packages the existing diagnostics bundle for sharing.
+- Landed: lightweight transition-only failure notifications (desktop + optional webhook) from live command health updates.
+- Landed: a user-facing diagnostics export action that packages the existing diagnostics bundle for sharing.
 
 ## Short-Term TODO (1-3 weeks)
 
-1. Add lightweight notification hooks for failures (desktop toast + optional webhook).
-2. Add a user-facing diagnostics export action built on the existing diagnostics bundle backend.
+1. Multi-user mode with auth and role-based safe controls (viewer/operator/admin).
+2. Historical time-series storage and charts (CPU/GPU/Git drift over time).
 
 ## Long-Term Roadmap (1-3 months)
 

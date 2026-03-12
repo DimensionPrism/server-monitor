@@ -16,6 +16,15 @@ PanelName = Literal["system", "gpu", "git", "clash"]
 
 
 @dataclass(slots=True)
+class NotificationSettings:
+    """Global operator notification preferences."""
+
+    desktop_enabled: bool = False
+    webhook_enabled: bool = False
+    webhook_url: str = ""
+
+
+@dataclass(slots=True)
 class ServerSettings:
     """One remote server definition used by SSH polling runtime."""
 
@@ -33,6 +42,7 @@ class DashboardSettings:
 
     metrics_interval_seconds: float = 3.0
     status_interval_seconds: float = 12.0
+    notifications: NotificationSettings = field(default_factory=NotificationSettings)
     servers: list[ServerSettings] = field(default_factory=list)
 
 
@@ -47,6 +57,7 @@ class DashboardSettingsStore:
             return DashboardSettings()
 
         raw = tomllib.loads(self.path.read_text(encoding="utf-8"))
+        notifications_raw = raw.get("notifications", {})
         servers = [
             ServerSettings(
                 server_id=item["server_id"],
@@ -61,6 +72,11 @@ class DashboardSettingsStore:
         return DashboardSettings(
             metrics_interval_seconds=float(raw.get("metrics_interval_seconds", 3.0)),
             status_interval_seconds=float(raw.get("status_interval_seconds", 12.0)),
+            notifications=NotificationSettings(
+                desktop_enabled=bool(notifications_raw.get("desktop_enabled", False)),
+                webhook_enabled=bool(notifications_raw.get("webhook_enabled", False)),
+                webhook_url=str(notifications_raw.get("webhook_url", "")),
+            ),
             servers=servers,
         )
 
@@ -68,6 +84,11 @@ class DashboardSettingsStore:
         payload = {
             "metrics_interval_seconds": settings.metrics_interval_seconds,
             "status_interval_seconds": settings.status_interval_seconds,
+            "notifications": {
+                "desktop_enabled": settings.notifications.desktop_enabled,
+                "webhook_enabled": settings.notifications.webhook_enabled,
+                "webhook_url": settings.notifications.webhook_url,
+            },
             "servers": [
                 {
                     "server_id": server.server_id,

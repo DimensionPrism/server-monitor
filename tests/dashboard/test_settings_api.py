@@ -121,6 +121,21 @@ def _make_client(tmp_path, runtime=None, tunnel_manager=None):
     return TestClient(app)
 
 
+def _make_client_and_store(tmp_path, runtime=None, tunnel_manager=None):
+    from server_monitor.dashboard.api import create_dashboard_app
+    from server_monitor.dashboard.settings import DashboardSettingsStore
+    from server_monitor.dashboard.ws_hub import WebSocketHub
+
+    store = DashboardSettingsStore(tmp_path / "servers.toml")
+    app = create_dashboard_app(
+        ws_hub=WebSocketHub(),
+        settings_store=store,
+        runtime=runtime,
+        clash_tunnel_manager=tunnel_manager,
+    )
+    return TestClient(app), store
+
+
 def test_settings_api_crud_server(tmp_path):
     client = _make_client(tmp_path)
 
@@ -196,6 +211,48 @@ def test_settings_api_working_dir_and_panel_updates(tmp_path):
     remove_dir = client.request("DELETE", "/api/servers/srv-b/working-dirs", json={"path": "/work/repo-b"})
     assert remove_dir.status_code == 200
     assert client.get("/api/settings").json()["servers"][0]["working_dirs"] == []
+
+
+def test_settings_api_returns_notification_settings(tmp_path):
+    from server_monitor.dashboard.settings import DashboardSettings, NotificationSettings
+
+    client, store = _make_client_and_store(tmp_path)
+    store.save(
+        DashboardSettings(
+            notifications=NotificationSettings(
+                desktop_enabled=True,
+                webhook_enabled=True,
+                webhook_url="https://hooks.example.test/server-monitor",
+            )
+        )
+    )
+
+    response = client.get("/api/settings")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["notifications"]["desktop_enabled"] is True
+    assert body["notifications"]["webhook_enabled"] is True
+    assert body["notifications"]["webhook_url"] == "https://hooks.example.test/server-monitor"
+
+
+def test_settings_api_updates_notification_settings(tmp_path):
+    client = _make_client(tmp_path)
+
+    response = client.put(
+        "/api/settings/notifications",
+        json={
+            "desktop_enabled": True,
+            "webhook_enabled": True,
+            "webhook_url": "https://hooks.example.test/server-monitor",
+        },
+    )
+
+    assert response.status_code == 200
+    body = client.get("/api/settings").json()
+    assert body["notifications"]["desktop_enabled"] is True
+    assert body["notifications"]["webhook_enabled"] is True
+    assert body["notifications"]["webhook_url"] == "https://hooks.example.test/server-monitor"
 
 
 def test_settings_api_git_ops_dispatches_to_runtime(tmp_path):

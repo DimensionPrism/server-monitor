@@ -10,6 +10,9 @@ const state = {
   panelOpenState: new Map(),
   clashSecrets: new Map(),
   clashTunnelPorts: new Map(),
+  notificationLatches: new Map(),
+  monitorToolbarStatus: "",
+  notificationSettingsStatus: "",
 };
 
 const DEFAULT_CLASH_API_PROBE_URL = "http://127.0.0.1:9090/version";
@@ -124,6 +127,192 @@ function setTabs() {
 
   monitorBtn.addEventListener("click", () => activate("monitor"));
   settingsBtn.addEventListener("click", () => activate("settings"));
+}
+
+function getNotificationSettings() {
+  const notifications = state.settings && state.settings.notifications;
+  return {
+    desktop_enabled: Boolean(notifications && notifications.desktop_enabled),
+    webhook_enabled: Boolean(notifications && notifications.webhook_enabled),
+    webhook_url: notifications && typeof notifications.webhook_url === "string" ? notifications.webhook_url : "",
+  };
+}
+
+function setMonitorToolbarStatus(message) {
+  const text = typeof message === "string" ? message : "";
+  state.monitorToolbarStatus = text;
+  const statusEl = byId("monitor-toolbar-status");
+  if (statusEl) {
+    statusEl.textContent = text;
+  }
+}
+
+function setNotificationSettingsStatus(message) {
+  const text = typeof message === "string" ? message : "";
+  state.notificationSettingsStatus = text;
+  const statusEl = byId("notification-settings-status");
+  if (statusEl) {
+    statusEl.textContent = text;
+  }
+}
+
+function notificationPermissionState() {
+  const notificationApi = typeof globalThis !== "undefined" ? globalThis.Notification : undefined;
+  if (!notificationApi || typeof notificationApi.permission !== "string") {
+    return "unsupported";
+  }
+  return notificationApi.permission;
+}
+
+function updateNotificationPermissionButton() {
+  const button = byId("notification-permission-btn");
+  if (!button) {
+    return;
+  }
+  const notifications = getNotificationSettings();
+  const permission = notificationPermissionState();
+  if (!notifications.desktop_enabled) {
+    button.textContent = "Desktop Off";
+    return;
+  }
+  if (permission === "granted") {
+    button.textContent = "Notifications On";
+    return;
+  }
+  if (permission === "denied") {
+    button.textContent = "Blocked";
+    return;
+  }
+  if (permission === "unsupported") {
+    button.textContent = "Unavailable";
+    return;
+  }
+  button.textContent = "Enable Notifications";
+}
+
+function diagnosticsFilename(timestampText) {
+  const parsed = timestampText ? new Date(timestampText) : new Date();
+  const safeDate = Number.isNaN(parsed.getTime()) ? new Date() : parsed;
+  const parts = [
+    safeDate.getFullYear(),
+    String(safeDate.getMonth() + 1).padStart(2, "0"),
+    String(safeDate.getDate()).padStart(2, "0"),
+    String(safeDate.getHours()).padStart(2, "0"),
+    String(safeDate.getMinutes()).padStart(2, "0"),
+    String(safeDate.getSeconds()).padStart(2, "0"),
+  ];
+  return `server-monitor-diagnostics-${parts[0]}-${parts[1]}-${parts[2]}-${parts[3]}${parts[4]}${parts[5]}.json`;
+}
+
+function triggerTextDownload(filename, text) {
+  if (typeof globalThis !== "undefined" && typeof globalThis.__blobCapture === "function") {
+    globalThis.__blobCapture(text);
+  }
+  if (typeof globalThis !== "undefined" && typeof globalThis.__downloadCapture === "function") {
+    globalThis.__downloadCapture(filename);
+  }
+  if (typeof Blob === "undefined" || !window.URL || typeof window.URL.createObjectURL !== "function") {
+    return;
+  }
+  const blob = new Blob([text], { type: "application/json" });
+  const downloadUrl = window.URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = downloadUrl;
+  link.download = filename;
+  document.body.appendChild(link);
+  if (typeof link.click === "function") {
+    link.click();
+  }
+  document.body.removeChild(link);
+  if (typeof window.URL.revokeObjectURL === "function") {
+    window.URL.revokeObjectURL(downloadUrl);
+  }
+}
+
+function notificationKey(serverId, panelName) {
+  return `${serverId}::${panelName}`;
+}
+
+function isDegradedCommandHealthState(value) {
+  return value === "failed" || value === "cooldown";
+}
+
+async function deliverDesktopNotification(serverId, panelName, summary) {
+  const notifications = getNotificationSettings();
+  const notificationApi = typeof globalThis !== "undefined" ? globalThis.Notification : undefined;
+  if (!notifications.desktop_enabled) {
+    return false;
+  }
+  if (!notificationApi || notificationApi.permission !== "granted") {
+    return false;
+  }
+  const detail = summary && summary.detail ? summary.detail : "Command degraded";
+  const stateLabel = summary && summary.state ? summary.state : "degraded";
+  const body = stateLabel === "cooldown"
+    ? `${panelName.toUpperCase()} entered cooldown`
+    : `${panelName.toUpperCase()} failed: ${detail}`;
+  new notificationApi(`Server Monitor: ${serverId}`, { body });
+  return true;
+}
+
+async function deliverWebhookNotification(serverId, panelName, summary) {
+  const notifications = getNotificationSettings();
+  const webhookUrl = notifications.webhook_url.trim();
+  if (!notifications.webhook_enabled || !webhookUrl) {
+    return false;
+  }
+  const payload = {
+    source: "server-monitor-dashboard",
+    server_id: serverId,
+    panel: panelName,
+    state: summary && summary.state ? summary.state : "unknown",
+    detail: summary && summary.detail ? summary.detail : "",
+    timestamp: summary && summary.updatedAt ? summary.updatedAt : new Date().toISOString(),
+  };
+  try {
+    const response = await fetch(webhookUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (!response.ok) {
+      throw new Error(`${response.status}`);
+    }
+    return true;
+  } catch (err) {
+    setMonitorToolbarStatus(`Webhook failed: ${err.message}`);
+    return false;
+  }
+}
+
+async function processNotificationTransitions(previousUpdate, nextUpdate) {
+  const serverId = nextUpdate && nextUpdate.server_id ? nextUpdate.server_id : "";
+  if (!serverId) {
+    return;
+  }
+  const nextHealth = nextUpdate && nextUpdate.command_health ? nextUpdate.command_health : {};
+  for (const panelName of COMMAND_HEALTH_PANEL_ORDER) {
+    if (!Object.prototype.hasOwnProperty.call(nextHealth, panelName)) {
+      continue;
+    }
+    const summary = normalizeCommandHealthSummary(nextHealth[panelName]);
+    const key = notificationKey(serverId, panelName);
+    const latched = state.notificationLatches.get(key) === true;
+
+    if (isDegradedCommandHealthState(summary.state)) {
+      if (latched) {
+        continue;
+      }
+      state.notificationLatches.set(key, true);
+      await deliverDesktopNotification(serverId, panelName, summary);
+      await deliverWebhookNotification(serverId, panelName, summary);
+      continue;
+    }
+
+    if (summary.state === "healthy" || summary.state === "unknown") {
+      state.notificationLatches.delete(key);
+    }
+  }
 }
 
 function metricBar(label, value) {
@@ -410,6 +599,131 @@ function renderGitPanel(update) {
     .join("\n");
 
   return `<div class="git-repo-list">${rows}</div>`;
+}
+
+function renderNotificationSettingsCard() {
+  const card = byId("settings-notifications-card");
+  if (!card) {
+    return;
+  }
+  const notifications = getNotificationSettings();
+  card.innerHTML = `
+    <div class="settings-card-head">
+      <h3>Notification Settings</h3>
+      <p class="muted">Global operator preferences for desktop alerts and optional webhook delivery.</p>
+    </div>
+    <form class="settings-form" id="notification-settings-form">
+      <fieldset>
+        <legend>Delivery Channels</legend>
+        <label><input id="notifications-desktop-enabled" type="checkbox" ${notifications.desktop_enabled ? "checked" : ""} /> Desktop notifications</label>
+        <label><input id="notifications-webhook-enabled" type="checkbox" ${notifications.webhook_enabled ? "checked" : ""} /> Webhook notifications</label>
+      </fieldset>
+      <label>
+        Webhook URL
+        <input id="notifications-webhook-url" type="text" value="${escapeHtml(notifications.webhook_url)}" placeholder="https://hooks.example.test/server-monitor" />
+      </label>
+      <div class="settings-notifications-actions">
+        <button id="notifications-save-btn" class="btn-primary" type="button">Save Notifications</button>
+        <span id="notification-settings-status" class="settings-notifications-status muted">${escapeHtml(state.notificationSettingsStatus)}</span>
+      </div>
+    </form>
+  `;
+  bindNotificationSettingsControls();
+}
+
+async function saveNotificationSettings() {
+  const desktopToggle = byId("notifications-desktop-enabled");
+  const webhookToggle = byId("notifications-webhook-enabled");
+  const webhookInput = byId("notifications-webhook-url");
+  if (!desktopToggle || !webhookToggle || !webhookInput) {
+    setNotificationSettingsStatus("Notification settings unavailable.");
+    return null;
+  }
+  try {
+    const response = await api("PUT", "/api/settings/notifications", {
+      desktop_enabled: desktopToggle.checked,
+      webhook_enabled: webhookToggle.checked,
+      webhook_url: webhookInput.value.trim(),
+    });
+    state.settings = response;
+    setNotificationSettingsStatus("Saved");
+    setMonitorToolbarStatus("Notification settings saved.");
+    renderSettings();
+    updateNotificationPermissionButton();
+    return response;
+  } catch (err) {
+    setNotificationSettingsStatus(`Save failed: ${err.message}`);
+    return null;
+  }
+}
+
+async function exportDiagnostics() {
+  try {
+    const bundle = await api("GET", "/api/diagnostics");
+    const serialized = JSON.stringify(bundle, null, 2);
+    const filename = diagnosticsFilename(bundle && bundle.generated_at);
+    triggerTextDownload(filename, serialized);
+    setMonitorToolbarStatus(`Diagnostics exported: ${filename}`);
+    return bundle;
+  } catch (err) {
+    setMonitorToolbarStatus(`Export failed: ${err.message}`);
+    return null;
+  }
+}
+
+function bindNotificationSettingsControls() {
+  const saveButton = byId("notifications-save-btn");
+  if (!saveButton || saveButton.dataset.bound === "1") {
+    return;
+  }
+  saveButton.dataset.bound = "1";
+  saveButton.addEventListener("click", async () => {
+    await saveNotificationSettings();
+  });
+}
+
+function bindMonitorToolbar() {
+  const exportButton = byId("export-diagnostics-btn");
+  if (exportButton && exportButton.dataset.bound !== "1") {
+    exportButton.dataset.bound = "1";
+    exportButton.addEventListener("click", async () => {
+      await exportDiagnostics();
+    });
+  }
+
+  const permissionButton = byId("notification-permission-btn");
+  if (permissionButton && permissionButton.dataset.bound !== "1") {
+    permissionButton.dataset.bound = "1";
+    permissionButton.addEventListener("click", async () => {
+      const notifications = getNotificationSettings();
+      const notificationApi = typeof globalThis !== "undefined" ? globalThis.Notification : undefined;
+      if (!notifications.desktop_enabled) {
+        setMonitorToolbarStatus("Enable desktop notifications in Settings first.");
+        updateNotificationPermissionButton();
+        return;
+      }
+      if (!notificationApi || typeof notificationApi.requestPermission !== "function") {
+        setMonitorToolbarStatus("Browser notifications unavailable.");
+        updateNotificationPermissionButton();
+        return;
+      }
+      if (notificationApi.permission === "granted") {
+        setMonitorToolbarStatus("Desktop notifications already enabled.");
+        updateNotificationPermissionButton();
+        return;
+      }
+      const permission = await notificationApi.requestPermission();
+      if (permission === "granted") {
+        setMonitorToolbarStatus("Desktop notifications enabled.");
+      } else {
+        setMonitorToolbarStatus(`Notification permission: ${permission}`);
+      }
+      updateNotificationPermissionButton();
+    });
+  }
+
+  updateNotificationPermissionButton();
+  setMonitorToolbarStatus(state.monitorToolbarStatus);
 }
 
 function renderMonitor() {
@@ -1148,8 +1462,10 @@ function renderSettings() {
   }
 
   renderSettingsAddCard(servers);
+  renderNotificationSettingsCard();
   renderSettingsOverview(servers);
   renderSettingsEditorPanel(servers);
+  updateNotificationPermissionButton();
 }
 
 async function loadSettings() {
@@ -1162,6 +1478,7 @@ async function loadSettings() {
     }
   });
   renderSettings();
+  bindMonitorToolbar();
 }
 
 function bindAddServerForm() {
@@ -1200,9 +1517,11 @@ function connectWs() {
   const protocol = window.location.protocol === "https:" ? "wss" : "ws";
   const ws = new WebSocket(`${protocol}://${window.location.host}/ws`);
 
-  ws.onmessage = (event) => {
+  ws.onmessage = async (event) => {
     try {
       const payload = JSON.parse(event.data);
+      const previous = state.updates.get(payload.server_id) || null;
+      await processNotificationTransitions(previous, payload);
       state.updates.set(payload.server_id, payload);
       renderMonitor();
     } catch (_) {
@@ -1217,6 +1536,7 @@ function connectWs() {
 
 async function init() {
   setTabs();
+  bindMonitorToolbar();
   bindSettingsAddToggle();
   bindAddServerForm();
   await loadSettings();
