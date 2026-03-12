@@ -1,5 +1,7 @@
 from fastapi.testclient import TestClient
 
+import asyncio
+
 
 class _NoopExecutor:
     async def run(self, alias: str, remote_command: str, timeout_seconds: float | None = None):
@@ -92,3 +94,52 @@ def test_diagnostics_endpoint_requires_runtime_support(tmp_path):
     response = client.get("/api/diagnostics")
 
     assert response.status_code == 503
+
+
+def test_diagnostics_endpoint_includes_metrics_stream_status(tmp_path):
+    from server_monitor.dashboard.metrics_stream_protocol import MetricsStreamSample
+    from server_monitor.dashboard.runtime import DashboardRuntime
+    from server_monitor.dashboard.settings import ServerSettings
+    from server_monitor.dashboard.ws_hub import WebSocketHub
+
+    client, store = _make_client(tmp_path)
+    store.create_server(
+        ServerSettings(
+            server_id="srv-stream",
+            ssh_alias="server-stream",
+            enabled_panels=["system", "gpu"],
+        )
+    )
+    runtime = DashboardRuntime(
+        hub=WebSocketHub(),
+        settings_store=store,
+        executor=_NoopExecutor(),
+    )
+    asyncio.run(
+        runtime._handle_metrics_stream_sample(
+            "srv-stream",
+            MetricsStreamSample(
+                sequence=1,
+                server_time="2026-03-12T12:00:00+00:00",
+                sample_interval_ms=250,
+                cpu_percent=11.0,
+                memory_percent=22.0,
+                disk_percent=33.0,
+                network_rx_kbps=44.0,
+                network_tx_kbps=55.0,
+                gpus=[],
+            ),
+        )
+    )
+    asyncio.run(runtime._handle_metrics_stream_state_change("srv-stream", "reconnecting"))
+    client, _ = _make_client(tmp_path, runtime=runtime)
+
+    response = client.get("/api/diagnostics")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["servers"][0]["server_id"] == "srv-stream"
+    assert body["servers"][0]["metrics_stream"]["state"] == "reconnecting"
+    assert body["servers"][0]["metrics_stream"]["last_sequence"] == 1
+    assert body["servers"][0]["metrics_stream"]["reconnect_count"] == 1
+    assert body["servers"][0]["metrics_stream"]["last_sample_server_time"] == "2026-03-12T12:00:00+00:00"

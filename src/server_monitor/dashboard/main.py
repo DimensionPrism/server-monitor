@@ -8,6 +8,7 @@ from pathlib import Path
 
 from server_monitor.dashboard.api import create_dashboard_app
 from server_monitor.dashboard.clash_tunnel import ClashTunnelManager
+from server_monitor.dashboard.metrics_stream_manager import MetricsStreamManager
 from server_monitor.dashboard.normalize import normalize_server_payload
 from server_monitor.dashboard.persistent_session import PersistentBatchTransport
 from server_monitor.dashboard.runtime import DashboardRuntime, SshCommandExecutor
@@ -75,5 +76,6 @@ def _build_runtime(hub: WebSocketHub, settings_store: DashboardSettingsStore) ->
         settings_store=settings_store,
         executor=SshCommandExecutor(),
         batch_transport=PersistentBatchTransport(),
+        metrics_stream_manager=MetricsStreamManager(),
         stale_after_seconds=15.0,
     )

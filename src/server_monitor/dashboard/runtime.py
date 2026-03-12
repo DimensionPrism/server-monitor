@@ -68,6 +68,17 @@ class _SkippedCommandResult:
     error: str | None = "cooldown_skip"
 
 
+@dataclass(slots=True)
+class _MetricsStreamStatus:
+    state: str = "unknown"
+    last_sample_received_at: str | None = None
+    last_sample_server_time: str | None = None
+    last_sequence: int | None = None
+    sample_interval_ms: int | None = None
+    reconnect_count: int = 0
+    state_changed_at: str | None = None
+
+
 class SshCommandExecutor:
     """Execute remote commands over SSH aliases."""
 
@@ -94,6 +105,7 @@ class DashboardRuntime:
         settings_store: DashboardSettingsStore,
         executor,
         batch_transport=None,
+        metrics_stream_manager=None,
         terminal_launcher=open_terminal_with_ssh,
         stale_after_seconds: float = 15.0,
     ) -> None:
@@ -101,6 +113,7 @@ class DashboardRuntime:
         self.settings_store = settings_store
         self.executor = executor
         self.batch_transport = batch_transport
+        self.metrics_stream_manager = metrics_stream_manager
         self.terminal_launcher = terminal_launcher
         self.stale_after_seconds = stale_after_seconds
         self._task: asyncio.Task | None = None
@@ -123,11 +136,20 @@ class DashboardRuntime:
         self._command_policies = default_command_policies()
         self._recent_command_health: dict[tuple[str, str, str], list[CommandHealthRecord]] = {}
         self._failure_trackers: dict[tuple[str, str, str], FailureTracker] = {}
+        self._metrics_stream_status: dict[str, _MetricsStreamStatus] = {}
+
+        if self.metrics_stream_manager is not None and hasattr(self.metrics_stream_manager, "bind"):
+            self.metrics_stream_manager.bind(
+                on_sample=self._handle_metrics_stream_sample,
+                on_state_change=self._handle_metrics_stream_state_change,
+            )
 
     async def start(self) -> None:
         if self._task is not None:
             return
         self._stop_event.clear()
+        if self.metrics_stream_manager is not None and hasattr(self.metrics_stream_manager, "start"):
+            await self.metrics_stream_manager.start(self.settings_store.load().servers)
         self._task = asyncio.create_task(self._run_loop(), name="dashboard-runtime-loop")
 
     async def stop(self) -> None:
@@ -144,6 +166,8 @@ class DashboardRuntime:
             with suppress(asyncio.CancelledError):
                 await task
         self._status_poll_tasks.clear()
+        if self.metrics_stream_manager is not None and hasattr(self.metrics_stream_manager, "stop"):
+            await self.metrics_stream_manager.stop()
         if self.batch_transport is not None and hasattr(self.batch_transport, "close"):
             await self.batch_transport.close()
 
@@ -185,26 +209,10 @@ class DashboardRuntime:
         status_interval_seconds: float,
     ) -> None:
         enabled = set(server.enabled_panels)
-        cached_system = self._system_cache.get(server.server_id, _empty_system_snapshot())
-        cached_gpus = self._gpu_cache.get(server.server_id, [])
-        metadata: dict[str, str] = {}
-        if server.server_id in self._system_last_updated_at:
-            metadata["system_last_updated_at"] = self._system_last_updated_at[server.server_id]
-        if server.server_id in self._gpu_last_updated_at:
-            metadata["gpu_last_updated_at"] = self._gpu_last_updated_at[server.server_id]
-        snapshot = {
-            "timestamp": now.isoformat(),
-            "cpu_percent": cached_system["cpu_percent"],
-            "memory_percent": cached_system["memory_percent"],
-            "disk_percent": cached_system["disk_percent"],
-            "network_rx_kbps": cached_system["network_rx_kbps"],
-            "network_tx_kbps": cached_system["network_tx_kbps"],
-            "gpus": [dict(gpu) for gpu in cached_gpus],
-            "metadata": metadata,
-        }
+        snapshot = self._build_cached_snapshot(server_id=server.server_id, now=now)
         host_unreachable = False
 
-        metric_results = await self._poll_metrics(server=server)
+        metric_results = {} if self.metrics_stream_manager is not None else await self._poll_metrics(server=server)
 
         if "system" in metric_results:
             system_execution = metric_results["system"]
@@ -264,6 +272,83 @@ class DashboardRuntime:
             if "clash" in enabled:
                 self._clash_last_poll_ok[server.server_id] = False
 
+        await self._broadcast_server_state(
+            server=server,
+            now=now,
+            snapshot=snapshot,
+            metrics_interval_seconds=metrics_interval_seconds,
+            status_interval_seconds=status_interval_seconds,
+        )
+
+    async def _handle_metrics_stream_sample(self, server_id: str, sample) -> None:
+        now = datetime.now(UTC)
+        system_snapshot = {
+            "cpu_percent": sample.cpu_percent,
+            "memory_percent": sample.memory_percent,
+            "disk_percent": sample.disk_percent,
+            "network_rx_kbps": sample.network_rx_kbps,
+            "network_tx_kbps": sample.network_tx_kbps,
+        }
+        self._system_cache[server_id] = system_snapshot
+        self._gpu_cache[server_id] = [dict(gpu) for gpu in sample.gpus]
+        updated_at = now.isoformat()
+        self._system_last_updated_at[server_id] = updated_at
+        self._gpu_last_updated_at[server_id] = updated_at
+        self._system_last_poll_ok[server_id] = True
+        self._gpu_last_poll_ok[server_id] = True
+        stream_status = self._metrics_stream_status_for(server_id)
+        stream_status.state = "live"
+        stream_status.last_sample_received_at = updated_at
+        stream_status.last_sample_server_time = sample.server_time
+        stream_status.last_sequence = sample.sequence
+        stream_status.sample_interval_ms = sample.sample_interval_ms
+        stream_status.state_changed_at = updated_at
+
+        server = _find_server(self.settings_store.load().servers, server_id)
+        settings = self.settings_store.load()
+        await self._broadcast_server_state(
+            server=server,
+            now=now,
+            snapshot=self._build_cached_snapshot(server_id=server_id, now=now),
+            metrics_interval_seconds=settings.metrics_interval_seconds,
+            status_interval_seconds=settings.status_interval_seconds,
+        )
+
+    async def _handle_metrics_stream_state_change(self, server_id: str, state: str) -> None:
+        stream_status = self._metrics_stream_status_for(server_id)
+        if state == "reconnecting":
+            stream_status.reconnect_count += 1
+        stream_status.state = state
+        stream_status.state_changed_at = datetime.now(UTC).isoformat()
+
+    def _build_cached_snapshot(self, *, server_id: str, now: datetime) -> dict:
+        cached_system = self._system_cache.get(server_id, _empty_system_snapshot())
+        cached_gpus = self._gpu_cache.get(server_id, [])
+        metadata: dict[str, str] = {}
+        if server_id in self._system_last_updated_at:
+            metadata["system_last_updated_at"] = self._system_last_updated_at[server_id]
+        if server_id in self._gpu_last_updated_at:
+            metadata["gpu_last_updated_at"] = self._gpu_last_updated_at[server_id]
+        return {
+            "timestamp": now.isoformat(),
+            "cpu_percent": cached_system["cpu_percent"],
+            "memory_percent": cached_system["memory_percent"],
+            "disk_percent": cached_system["disk_percent"],
+            "network_rx_kbps": cached_system["network_rx_kbps"],
+            "network_tx_kbps": cached_system["network_tx_kbps"],
+            "gpus": [dict(gpu) for gpu in cached_gpus],
+            "metadata": metadata,
+        }
+
+    async def _broadcast_server_state(
+        self,
+        *,
+        server: ServerSettings,
+        now: datetime,
+        snapshot: dict,
+        metrics_interval_seconds: float,
+        status_interval_seconds: float,
+    ) -> None:
         repos = [
             repo
             for repo in self._repo_cache.get(server.server_id, [])
@@ -273,9 +358,9 @@ class DashboardRuntime:
         if server.server_id in self._clash_last_updated_at:
             clash["last_updated_at"] = self._clash_last_updated_at[server.server_id]
 
-        if "git" not in enabled:
+        if "git" not in server.enabled_panels:
             repos = []
-        if "clash" not in enabled:
+        if "clash" not in server.enabled_panels:
             clash = DEFAULT_CLASH
 
         metrics_threshold_seconds = max(1.0, metrics_interval_seconds * 2)
@@ -1288,19 +1373,25 @@ class DashboardRuntime:
         for panel_name in server.enabled_panels:
             try:
                 if panel_name == "system":
-                    summaries[panel_name] = self._summary_for_single_command(
-                        server_id=server.server_id,
-                        command_kind=CommandKind.SYSTEM,
-                        target_label="server",
-                        detail="Last poll succeeded",
-                    )
+                    if self.metrics_stream_manager is not None:
+                        summaries[panel_name] = self._summary_for_metrics_stream(server_id=server.server_id)
+                    else:
+                        summaries[panel_name] = self._summary_for_single_command(
+                            server_id=server.server_id,
+                            command_kind=CommandKind.SYSTEM,
+                            target_label="server",
+                            detail="Last poll succeeded",
+                        )
                 elif panel_name == "gpu":
-                    summaries[panel_name] = self._summary_for_single_command(
-                        server_id=server.server_id,
-                        command_kind=CommandKind.GPU,
-                        target_label="server",
-                        detail="Last poll succeeded",
-                    )
+                    if self.metrics_stream_manager is not None:
+                        summaries[panel_name] = self._summary_for_metrics_stream(server_id=server.server_id)
+                    else:
+                        summaries[panel_name] = self._summary_for_single_command(
+                            server_id=server.server_id,
+                            command_kind=CommandKind.GPU,
+                            target_label="server",
+                            detail="Last poll succeeded",
+                        )
                 elif panel_name == "git":
                     summaries[panel_name] = self._summary_for_git(server=server)
                 elif panel_name == "clash":
@@ -1308,6 +1399,45 @@ class DashboardRuntime:
             except Exception:
                 summaries[panel_name] = _unknown_command_health_summary()
         return summaries
+
+    def _summary_for_metrics_stream(self, *, server_id: str) -> dict:
+        stream_status = self._metrics_stream_status.get(server_id)
+        if stream_status is None:
+            return _unknown_command_health_summary()
+
+        if stream_status.state == "live":
+            return {
+                "state": "healthy",
+                "label": "live",
+                "latency_ms": None,
+                "detail": "Metrics stream active",
+                "updated_at": stream_status.last_sample_received_at,
+            }
+        if stream_status.state == "reconnecting":
+            return {
+                "state": "retrying",
+                "label": "reconnecting",
+                "latency_ms": None,
+                "detail": "Metrics stream reconnecting",
+                "updated_at": stream_status.state_changed_at or stream_status.last_sample_received_at,
+            }
+        if stream_status.state == "connecting":
+            return {
+                "state": "retrying",
+                "label": "connecting",
+                "latency_ms": None,
+                "detail": "Metrics stream connecting",
+                "updated_at": stream_status.state_changed_at,
+            }
+        if stream_status.state == "stopped":
+            return {
+                "state": "failed",
+                "label": "stopped",
+                "latency_ms": None,
+                "detail": "Metrics stream stopped",
+                "updated_at": stream_status.state_changed_at or stream_status.last_sample_received_at,
+            }
+        return _unknown_command_health_summary()
 
     def _summary_for_single_command(
         self,
@@ -1466,11 +1596,30 @@ class DashboardRuntime:
                 }
             )
 
+        for server_id, stream_status in sorted(self._metrics_stream_status.items()):
+            server_entry = servers.setdefault(server_id, {"server_id": server_id, "commands": []})
+            server_entry["metrics_stream"] = {
+                "state": stream_status.state,
+                "last_sample_received_at": stream_status.last_sample_received_at,
+                "last_sample_server_time": stream_status.last_sample_server_time,
+                "last_sequence": stream_status.last_sequence,
+                "sample_interval_ms": stream_status.sample_interval_ms,
+                "reconnect_count": stream_status.reconnect_count,
+                "state_changed_at": stream_status.state_changed_at,
+            }
+
         return {
             "generated_at": datetime.now(UTC).isoformat(),
             "settings": _serialize_runtime_settings(settings),
             "servers": [servers[server_id] for server_id in sorted(servers.keys())],
         }
+
+    def _metrics_stream_status_for(self, server_id: str) -> _MetricsStreamStatus:
+        status = self._metrics_stream_status.get(server_id)
+        if status is None:
+            status = _MetricsStreamStatus()
+            self._metrics_stream_status[server_id] = status
+        return status
 
     def _replace_cached_repo(self, *, server_id: str, repo: dict) -> None:
         existing = self._repo_cache.get(server_id, [])

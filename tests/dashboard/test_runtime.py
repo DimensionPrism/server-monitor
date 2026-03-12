@@ -1,5 +1,6 @@
 import asyncio
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 import re
 import time
 
@@ -22,6 +23,32 @@ class _FakeSettingsStore:
 
     def load(self) -> DashboardSettings:
         return self._settings
+
+
+class _FakeMetricsStreamManager:
+    def __init__(self):
+        self.started_with = []
+        self.stopped = False
+        self._on_sample = None
+        self._on_state_change = None
+
+    def bind(self, *, on_sample, on_state_change) -> None:
+        self._on_sample = on_sample
+        self._on_state_change = on_state_change
+
+    async def start(self, servers) -> None:
+        self.started_with.append(list(servers))
+
+    async def stop(self) -> None:
+        self.stopped = True
+
+    async def emit_sample(self, server_id: str, sample) -> None:
+        assert self._on_sample is not None
+        await self._on_sample(server_id, sample)
+
+    async def emit_state(self, server_id: str, state: str) -> None:
+        assert self._on_state_change is not None
+        await self._on_state_change(server_id, state)
 
 
 @dataclass
@@ -2362,3 +2389,259 @@ async def test_runtime_clash_payload_contains_ip_location():
     assert payload["clash"]["controller_port"] == "7373"
     assert payload["clash"]["message"] == "ok"
     await runtime.stop()
+
+
+@pytest.mark.asyncio
+async def test_runtime_metrics_stream_start_binds_and_starts_manager():
+    from server_monitor.dashboard.runtime import DashboardRuntime
+    from server_monitor.dashboard.ws_hub import WebSocketHub
+
+    settings = DashboardSettings(
+        metrics_interval_seconds=1.0,
+        status_interval_seconds=10.0,
+        servers=[
+            ServerSettings(
+                server_id="server-stream-start",
+                ssh_alias="srv-stream-start",
+                working_dirs=["/work/repo-a"],
+                enabled_panels=["system", "gpu", "git"],
+            )
+        ],
+    )
+
+    metrics_stream_manager = _FakeMetricsStreamManager()
+    runtime = DashboardRuntime(
+        hub=WebSocketHub(),
+        settings_store=_FakeSettingsStore(settings),
+        executor=_FakeExecutor(),
+        metrics_stream_manager=metrics_stream_manager,
+    )
+
+    await runtime.start()
+    await runtime.stop()
+
+    assert len(metrics_stream_manager.started_with) == 1
+    assert metrics_stream_manager.started_with[0][0].server_id == "server-stream-start"
+    assert metrics_stream_manager.stopped is True
+
+
+@pytest.mark.asyncio
+async def test_runtime_metrics_stream_sample_updates_snapshot_and_broadcasts_immediately():
+    from server_monitor.dashboard.metrics_stream_protocol import MetricsStreamSample
+    from server_monitor.dashboard.runtime import DashboardRuntime
+    from server_monitor.dashboard.ws_hub import WebSocketHub
+
+    settings = DashboardSettings(
+        metrics_interval_seconds=1.0,
+        status_interval_seconds=10.0,
+        servers=[
+            ServerSettings(
+                server_id="server-stream-sample",
+                ssh_alias="srv-stream-sample",
+                working_dirs=[],
+                enabled_panels=["system", "gpu"],
+            )
+        ],
+    )
+
+    hub = WebSocketHub()
+    ws = _FakeWebSocket()
+    await hub.connect(ws)
+    metrics_stream_manager = _FakeMetricsStreamManager()
+    runtime = DashboardRuntime(
+        hub=hub,
+        settings_store=_FakeSettingsStore(settings),
+        executor=_FakeExecutor(),
+        metrics_stream_manager=metrics_stream_manager,
+    )
+
+    await runtime.start()
+    await metrics_stream_manager.emit_state("server-stream-sample", "live")
+    await metrics_stream_manager.emit_sample(
+        "server-stream-sample",
+        MetricsStreamSample(
+            sequence=1,
+            server_time="2026-03-12T12:00:00+00:00",
+            sample_interval_ms=250,
+            cpu_percent=11.0,
+            memory_percent=22.0,
+            disk_percent=33.0,
+            network_rx_kbps=44.0,
+            network_tx_kbps=55.0,
+            gpus=[
+                {
+                    "index": 0,
+                    "name": "NVIDIA A100",
+                    "utilization_gpu_percent": 70.0,
+                    "memory_used_mib": 1024,
+                    "memory_total_mib": 40960,
+                    "temperature_celsius": 50.0,
+                }
+            ],
+        ),
+    )
+    await runtime.stop()
+
+    payload = ws.messages[-1]
+    assert payload["snapshot"]["cpu_percent"] == 11.0
+    assert payload["snapshot"]["network_rx_kbps"] == 44.0
+    assert payload["snapshot"]["gpus"][0]["name"] == "NVIDIA A100"
+    assert payload["freshness"]["system"]["state"] == "live"
+    assert payload["freshness"]["gpu"]["state"] == "live"
+
+
+@pytest.mark.asyncio
+async def test_runtime_metrics_stream_poll_once_only_runs_git_and_clash_status():
+    from server_monitor.dashboard.runtime import DashboardRuntime
+    from server_monitor.dashboard.ws_hub import WebSocketHub
+
+    settings = DashboardSettings(
+        metrics_interval_seconds=1.0,
+        status_interval_seconds=0.0,
+        servers=[
+            ServerSettings(
+                server_id="server-stream-status-only",
+                ssh_alias="srv-stream-status-only",
+                working_dirs=["/work/repo-a"],
+                enabled_panels=["system", "gpu", "git", "clash"],
+            )
+        ],
+    )
+
+    executor = _FakeExecutor()
+    runtime = DashboardRuntime(
+        hub=WebSocketHub(),
+        settings_store=_FakeSettingsStore(settings),
+        executor=executor,
+        metrics_stream_manager=_FakeMetricsStreamManager(),
+    )
+
+    await runtime.poll_once()
+    await asyncio.sleep(0.01)
+    await runtime.stop()
+
+    assert executor.calls
+    assert not any("SMTOKEN BEGIN kind=system target=server" in call[1] for call in executor.calls)
+    assert any("SMTOKEN BEGIN kind=git_status target=" in call[1] for call in executor.calls)
+
+
+@pytest.mark.asyncio
+async def test_runtime_metrics_stream_health_uses_stream_state_instead_of_latency():
+    from server_monitor.dashboard.metrics_stream_protocol import MetricsStreamSample
+    from server_monitor.dashboard.runtime import DashboardRuntime
+    from server_monitor.dashboard.ws_hub import WebSocketHub
+
+    settings = DashboardSettings(
+        metrics_interval_seconds=1.0,
+        status_interval_seconds=10.0,
+        servers=[
+            ServerSettings(
+                server_id="server-stream-health",
+                ssh_alias="srv-stream-health",
+                working_dirs=[],
+                enabled_panels=["system", "gpu"],
+            )
+        ],
+    )
+
+    hub = WebSocketHub()
+    ws = _FakeWebSocket()
+    await hub.connect(ws)
+    metrics_stream_manager = _FakeMetricsStreamManager()
+    runtime = DashboardRuntime(
+        hub=hub,
+        settings_store=_FakeSettingsStore(settings),
+        executor=_FakeExecutor(),
+        metrics_stream_manager=metrics_stream_manager,
+    )
+
+    await runtime.start()
+    await metrics_stream_manager.emit_state("server-stream-health", "live")
+    await metrics_stream_manager.emit_sample(
+        "server-stream-health",
+        MetricsStreamSample(
+            sequence=1,
+            server_time="2026-03-12T12:00:00+00:00",
+            sample_interval_ms=250,
+            cpu_percent=11.0,
+            memory_percent=22.0,
+            disk_percent=33.0,
+            network_rx_kbps=44.0,
+            network_tx_kbps=55.0,
+            gpus=[],
+        ),
+    )
+    await runtime.stop()
+
+    payload = ws.messages[-1]
+    assert payload["command_health"]["system"]["state"] == "healthy"
+    assert payload["command_health"]["system"]["label"] == "live"
+    assert payload["command_health"]["system"]["latency_ms"] is None
+    assert payload["command_health"]["gpu"]["state"] == "healthy"
+    assert payload["command_health"]["gpu"]["label"] == "live"
+    assert payload["command_health"]["gpu"]["latency_ms"] is None
+
+
+@pytest.mark.asyncio
+async def test_runtime_metrics_stream_cached_disconnect_keeps_last_sample_visible():
+    from server_monitor.dashboard.metrics_stream_protocol import MetricsStreamSample
+    from server_monitor.dashboard.runtime import DashboardRuntime
+    from server_monitor.dashboard.ws_hub import WebSocketHub
+
+    settings = DashboardSettings(
+        metrics_interval_seconds=1.0,
+        status_interval_seconds=10.0,
+        servers=[
+            ServerSettings(
+                server_id="server-stream-cached",
+                ssh_alias="srv-stream-cached",
+                working_dirs=[],
+                enabled_panels=["system", "gpu"],
+            )
+        ],
+    )
+
+    hub = WebSocketHub()
+    ws = _FakeWebSocket()
+    await hub.connect(ws)
+    metrics_stream_manager = _FakeMetricsStreamManager()
+    runtime = DashboardRuntime(
+        hub=hub,
+        settings_store=_FakeSettingsStore(settings),
+        executor=_FakeExecutor(),
+        metrics_stream_manager=metrics_stream_manager,
+    )
+
+    await runtime.start()
+    await metrics_stream_manager.emit_state("server-stream-cached", "live")
+    await metrics_stream_manager.emit_sample(
+        "server-stream-cached",
+        MetricsStreamSample(
+            sequence=1,
+            server_time="2026-03-12T12:00:00+00:00",
+            sample_interval_ms=250,
+            cpu_percent=11.0,
+            memory_percent=22.0,
+            disk_percent=33.0,
+            network_rx_kbps=44.0,
+            network_tx_kbps=55.0,
+            gpus=[],
+        ),
+    )
+    stale_timestamp = (datetime.now(UTC) - timedelta(seconds=5)).isoformat()
+    runtime._system_last_updated_at["server-stream-cached"] = stale_timestamp
+    runtime._gpu_last_updated_at["server-stream-cached"] = stale_timestamp
+    await metrics_stream_manager.emit_state("server-stream-cached", "reconnecting")
+
+    await runtime.poll_once()
+    await runtime.stop()
+
+    payload = ws.messages[-1]
+    assert payload["snapshot"]["cpu_percent"] == 11.0
+    assert payload["snapshot"]["memory_percent"] == 22.0
+    assert payload["freshness"]["system"]["state"] == "cached"
+    assert payload["freshness"]["gpu"]["state"] == "cached"
+    assert payload["command_health"]["system"]["state"] == "retrying"
+    assert payload["command_health"]["system"]["label"] == "reconnecting"
+    assert payload["command_health"]["gpu"]["state"] == "retrying"
+    assert payload["command_health"]["gpu"]["label"] == "reconnecting"

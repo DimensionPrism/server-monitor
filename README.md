@@ -6,7 +6,8 @@ Local dashboard for monitoring remote GPU servers over SSH aliases in a single b
 
 - Agentless monitoring (no remote repo clone/install needed)
 - Summary-first server cards with a metrics-only collapsed state for faster daily scanning
-- System/GPU/Git/Clash snapshot polling over SSH
+- Agentless continuous SSH streaming for `system` and `gpu`
+- Snapshot polling over SSH for `git` and `clash`
 - Freshness badges (`LIVE`/`CACHED`) for System/GPU/Git/Clash panels and repo rows
 - Multi-GPU summary signal on each card (`active/total` devices plus `peak` utilization)
 - Secret-aware Clash API/UI reachability checks with configurable probe URLs
@@ -101,6 +102,9 @@ Notes:
 - Override settings path with:
   - `SERVER_MONITOR_SETTINGS_PATH=/path/to/servers.toml`
 - You can also manage most settings directly from the browser Settings tab with add/reopen, overview, and focused edit flows.
+- `system` and `gpu` now use one long-lived SSH metrics stream per configured server.
+- The first streaming version targets roughly `4/sec` internally and does not expose a separate stream-rate setting in the settings file or UI.
+- `metrics_interval_seconds` still controls the runtime loop cadence for background status work; it no longer controls `system`/`gpu` sample frequency when streaming is enabled.
 - Git operations are restricted to repo paths declared in each server's `working_dirs`.
 - No destructive git commands are exposed in the UI/API.
 - Clash panel can open/reuse a local SSH forward and launch the remote Clash UI in a browser tab.
@@ -108,14 +112,16 @@ Notes:
 - Status polling now runs on a non-blocking background path so stalled SSH status commands no longer block dashboard cycles or overwrite the last good Clash snapshot on transient secret command failures.
 - Batched polling keeps card detail and freshness the same while lowering SSH setup overhead on the default dashboard card mix.
 - Batched polls prefer a persistent SSH shell per alias and automatically retry through the existing one-shot SSH path if the persistent transport fails.
+- If a metrics stream drops, the last good `system`/`gpu` sample stays visible while freshness ages from `LIVE` to `CACHED`, and the command-health chips switch to stream-state labels like `reconnecting`.
 - Clash reachability treats HTTP redirects (`3xx`) as reachable to support `/ui` -> `/ui/` style responses.
 - Recent command health is kept in memory so repeated transient failures can retry in a bounded way and briefly cool down before the next attempt.
 - `GET /api/diagnostics` returns a redaction-safe JSON bundle of current settings and recent command outcomes for debugging/sharing.
+- `GET /api/diagnostics` now also exposes per-server `metrics_stream` state, last sample metadata, and reconnect counters.
 - The monitor toolbar can export the diagnostics bundle directly as a timestamped JSON download.
 - A quick latency check after launch:
   - start the dashboard
   - open `GET /api/diagnostics`
-  - compare the latest `duration_ms` values for `system`, `gpu`, `git_status`, `clash_secret`, and `clash_probe`
+  - compare the `metrics_stream` section for `system`/`gpu` liveliness and the latest `duration_ms` values for `git_status`, `clash_secret`, and `clash_probe`
 - Failure notifications are evaluated in the open browser session from live `command_health` updates and only fire on new degraded transitions.
 
 ## Testing
