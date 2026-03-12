@@ -43,3 +43,11 @@ def test_build_metrics_stream_command_emits_one_json_object_per_iteration():
     command = build_metrics_stream_command(sample_interval_seconds=0.25, disk_interval_seconds=5.0)
 
     assert "printf '%s\\n' \"$JSON_LINE\"" in command
+
+
+def test_build_metrics_stream_command_emits_millisecond_precision_server_time():
+    from server_monitor.dashboard.metrics_stream_command import build_metrics_stream_command
+
+    command = build_metrics_stream_command(sample_interval_seconds=0.25, disk_interval_seconds=5.0)
+
+    assert 'date -u +"%Y-%m-%dT%H:%M:%S.%3N+00:00"' in command

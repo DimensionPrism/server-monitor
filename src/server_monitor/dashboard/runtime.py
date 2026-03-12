@@ -73,6 +73,7 @@ class _MetricsStreamStatus:
     state: str = "unknown"
     last_sample_received_at: str | None = None
     last_sample_server_time: str | None = None
+    transport_latency_ms: int | None = None
     last_sequence: int | None = None
     sample_interval_ms: int | None = None
     reconnect_count: int = 0
@@ -300,6 +301,11 @@ class DashboardRuntime:
         stream_status.state = "live"
         stream_status.last_sample_received_at = updated_at
         stream_status.last_sample_server_time = sample.server_time
+        stream_status.transport_latency_ms = _metrics_stream_transport_latency_ms(
+            sample_server_time=sample.server_time,
+            received_at=now,
+            sample_interval_ms=sample.sample_interval_ms,
+        )
         stream_status.last_sequence = sample.sequence
         stream_status.sample_interval_ms = sample.sample_interval_ms
         stream_status.state_changed_at = updated_at
@@ -1422,11 +1428,12 @@ class DashboardRuntime:
             return _unknown_command_health_summary()
 
         if stream_status.state == "live":
+            latency_ms = stream_status.transport_latency_ms
             return {
                 "state": "healthy",
-                "label": "live",
-                "latency_ms": None,
-                "detail": "Metrics stream active",
+                "label": f"{latency_ms}ms" if latency_ms is not None else "--",
+                "latency_ms": latency_ms,
+                "detail": "Metrics stream transport latency" if latency_ms is not None else "Metrics stream active",
                 "updated_at": stream_status.last_sample_received_at,
             }
         if stream_status.state == "reconnecting":
@@ -1637,6 +1644,7 @@ class DashboardRuntime:
             "state": stream_status.state,
             "last_sample_received_at": stream_status.last_sample_received_at,
             "last_sample_server_time": stream_status.last_sample_server_time,
+            "transport_latency_ms": stream_status.transport_latency_ms,
             "last_sequence": stream_status.last_sequence,
             "sample_interval_ms": stream_status.sample_interval_ms,
             "reconnect_count": stream_status.reconnect_count,
@@ -1939,6 +1947,43 @@ def _age_seconds_from_iso(*, now: datetime, timestamp_iso: str | None) -> int | 
     except ValueError:
         return None
     return max(0, int((now - parsed).total_seconds()))
+
+
+def _metrics_stream_transport_latency_ms(
+    *,
+    sample_server_time: str | None,
+    received_at: datetime,
+    sample_interval_ms: int | None = None,
+) -> int | None:
+    if not sample_server_time:
+        return None
+    try:
+        parsed = datetime.fromisoformat(sample_server_time)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    latency_ms = int((received_at - parsed).total_seconds() * 1000)
+    if latency_ms < 0:
+        return None
+    max_latency_ms = _metrics_stream_latency_upper_bound_ms(sample_interval_ms)
+    if latency_ms > max_latency_ms:
+        return None
+    return latency_ms
+
+
+def _metrics_stream_latency_upper_bound_ms(sample_interval_ms: int | None) -> int:
+    floor_ms = 5000
+    multiplier = 20
+    if sample_interval_ms is None:
+        return floor_ms
+    try:
+        interval_ms = int(sample_interval_ms)
+    except (TypeError, ValueError):
+        return floor_ms
+    if interval_ms <= 0:
+        return floor_ms
+    return max(floor_ms, interval_ms * multiplier)
 
 
 def _extract_clash_secret(output: str) -> str | None:

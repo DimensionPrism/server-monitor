@@ -318,7 +318,7 @@ def test_render_monitor_command_health_strip_preserves_panel_order_and_hides_ok_
     )
 
 
-def test_render_monitor_shows_metrics_stream_interval_in_live_badges():
+def test_render_monitor_keeps_metrics_live_badges_without_fake_interval_suffix():
     _run_app_js_test(
         """
         const grid = document.getElementById("monitor-grid");
@@ -339,8 +339,8 @@ def test_render_monitor_shows_metrics_stream_interval_in_live_badges():
                 sample_interval_ms: 250,
               },
               command_health: {
-                system: { state: "healthy", label: "live", detail: "Metrics stream active" },
-                gpu: { state: "healthy", label: "live", detail: "Metrics stream active" },
+                system: { state: "healthy", label: "36ms", detail: "Metrics stream transport latency" },
+                gpu: { state: "healthy", label: "41ms", detail: "Metrics stream transport latency" },
               },
               snapshot: {
                 cpu_percent: 10,
@@ -363,14 +363,23 @@ def test_render_monitor_shows_metrics_stream_interval_in_live_badges():
         if (!grid.innerHTML.includes("GPU <span class=\\"freshness-badge freshness-live\\"")) {
           throw new Error("gpu badge missing");
         }
-        if (!grid.innerHTML.includes(">LIVE 250ms<")) {
-          throw new Error("stream interval missing from live badge");
+        if (!grid.innerHTML.includes(">LIVE<")) {
+          throw new Error("expected live badge text");
+        }
+        if (grid.innerHTML.includes("LIVE 250ms")) {
+          throw new Error("stream cadence leaked into live badge text");
+        }
+        if (!grid.innerHTML.includes('data-command-health-panel="system"') || !grid.innerHTML.includes(">36ms<")) {
+          throw new Error("system latency chip missing");
+        }
+        if (!grid.innerHTML.includes('data-command-health-panel="gpu"') || !grid.innerHTML.includes(">41ms<")) {
+          throw new Error("gpu latency chip missing");
         }
         """
     )
 
 
-def test_render_monitor_hides_stream_backed_metrics_health_chips():
+def test_render_monitor_keeps_stream_backed_metrics_health_chips_visible():
     _run_app_js_test(
         """
         const grid = document.getElementById("monitor-grid");
@@ -387,8 +396,8 @@ def test_render_monitor_hides_stream_backed_metrics_health_chips():
                 sample_interval_ms: 250,
               },
               command_health: {
-                system: { state: "healthy", label: "live", detail: "Metrics stream active" },
-                gpu: { state: "healthy", label: "live", detail: "Metrics stream active" },
+                system: { state: "healthy", label: "28ms", detail: "Metrics stream transport latency" },
+                gpu: { state: "healthy", label: "31ms", detail: "Metrics stream transport latency" },
                 git: { state: "healthy", label: "182ms", detail: "Git ok" },
               },
               freshness: {
@@ -411,14 +420,57 @@ def test_render_monitor_hides_stream_backed_metrics_health_chips():
 
         __testExports.renderMonitor();
 
-        if (grid.innerHTML.includes('data-command-health-panel="system"')) {
-          throw new Error("system chip should be hidden for metrics stream");
+        if (!grid.innerHTML.includes('data-command-health-panel="system"')) {
+          throw new Error("system chip should remain visible");
         }
-        if (grid.innerHTML.includes('data-command-health-panel="gpu"')) {
-          throw new Error("gpu chip should be hidden for metrics stream");
+        if (!grid.innerHTML.includes('data-command-health-panel="gpu"')) {
+          throw new Error("gpu chip should remain visible");
         }
         if (!grid.innerHTML.includes('data-command-health-panel="git"')) {
           throw new Error("git chip should remain visible");
+        }
+        """
+    )
+
+
+def test_render_monitor_avoids_duplicate_git_and_clash_summary_status_chips():
+    _run_app_js_test(
+        """
+        const grid = document.getElementById("monitor-grid");
+        globalThis.__querySelectorAll = () => [];
+
+        __testExports.state.updates = new Map([
+          [
+            "server-a",
+            {
+              server_id: "server-a",
+              enabled_panels: ["git", "clash"],
+              freshness: {
+                git: { state: "live", reason: "ok" },
+                clash: { state: "live", reason: "ok" },
+              },
+              command_health: {
+                git: { state: "healthy", label: "152ms", detail: "All repos healthy" },
+                clash: { state: "healthy", label: "44ms", detail: "Last probe succeeded" },
+              },
+              snapshot: {
+                cpu_percent: 0,
+                memory_percent: 0,
+                disk_percent: 0,
+                gpus: [],
+                metadata: {},
+              },
+              repos: [],
+              clash: {},
+            },
+          ],
+        ]);
+
+        __testExports.renderMonitor();
+
+        const badgeCount = (grid.innerHTML.match(/freshness-badge/g) || []).length;
+        if (badgeCount !== 1) {
+          throw new Error(`expected only card-level freshness badge, found ${badgeCount}`);
         }
         """
     )

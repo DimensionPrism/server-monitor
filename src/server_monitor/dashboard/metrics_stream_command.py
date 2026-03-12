@@ -107,7 +107,7 @@ while :; do
   PREV_TX_BYTES=$TX_BYTES
 
   GPU_JSON=$(build_gpu_json)
-  SERVER_TIME=$(date -u +"%Y-%m-%dT%H:%M:%S+00:00")
+  SERVER_TIME=$(date -u +"%Y-%m-%dT%H:%M:%S.%3N+00:00")
   SEQUENCE=$((SEQUENCE + 1))
 
   JSON_LINE=$(printf '{{"sequence":%s,"server_time":"%s","sample_interval_ms":%s,"cpu_percent":%s,"memory_percent":%s,"disk_percent":%s,"network_rx_kbps":%s,"network_tx_kbps":%s,"gpus":%s}}' \

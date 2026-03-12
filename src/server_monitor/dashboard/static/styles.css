@@ -202,26 +202,28 @@ main {
 }
 
 .command-health-strip {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.55rem;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(118px, 1fr));
+  gap: 0.5rem;
 }
 
 .command-health-chip {
-  display: inline-flex;
+  display: flex;
   align-items: center;
-  gap: 0.42rem;
+  justify-content: space-between;
+  gap: 0.5rem;
   min-width: 0;
+  width: 100%;
   padding: 0.42rem 0.7rem;
   border: 1px solid rgba(153, 190, 221, 0.14);
-  border-radius: 999px;
+  border-radius: 12px;
   background: rgba(255, 255, 255, 0.04);
   color: var(--text);
 }
 
 .command-health-chip-label {
   color: var(--muted);
-  font-size: 0.66rem;
+  font-size: 0.63rem;
   font-weight: 700;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -1004,6 +1006,10 @@ main {
     grid-template-columns: 1fr;
   }
 
+  .command-health-strip {
+    grid-template-columns: 1fr 1fr;
+  }
+
   .kv {
     grid-template-columns: 1fr;
   }
@@ -1016,5 +1022,9 @@ main {
 
   .meter-row {
     grid-template-columns: 68px 1fr 54px;
+  }
+
+  .command-health-strip {
+    grid-template-columns: 1fr;
   }
 }

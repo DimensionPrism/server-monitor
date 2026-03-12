@@ -395,30 +395,7 @@ function renderSummaryMetric(label, value, meta, level = "ok") {
   `;
 }
 
-function metricsStreamLiveSuffix(update, panelName, freshness) {
-  if ((panelName !== "system" && panelName !== "gpu") || !freshness || freshness.state !== "live") {
-    return "";
-  }
-  const metricsStream = update && update.metrics_stream ? update.metrics_stream : null;
-  if (!metricsStream || metricsStream.state !== "live") {
-    return "";
-  }
-  const intervalMs = Number(metricsStream.sample_interval_ms);
-  if (!Number.isFinite(intervalMs) || intervalMs <= 0) {
-    return "";
-  }
-  return `${Math.round(intervalMs)}ms`;
-}
-
-function isStreamBackedMetricsPanel(update, panelName) {
-  if (panelName !== "system" && panelName !== "gpu") {
-    return false;
-  }
-  const metricsStream = update && update.metrics_stream ? update.metrics_stream : null;
-  return Boolean(metricsStream && typeof metricsStream.state === "string" && metricsStream.state);
-}
-
-function commandHealthOrder(enabledPanels, update) {
+function commandHealthOrder(enabledPanels) {
   return COMMAND_HEALTH_PANEL_ORDER.filter((panel) => enabledPanels.has(panel));
 }
 
@@ -446,7 +423,7 @@ function renderCommandHealthChip(panelName, summary) {
 }
 
 function renderCommandHealthStrip(update, panels) {
-  const orderedPanels = commandHealthOrder(panels, update).filter((panelName) => !isStreamBackedMetricsPanel(update, panelName));
+  const orderedPanels = commandHealthOrder(panels);
   if (orderedPanels.length === 0) {
     return "";
   }
@@ -791,9 +768,7 @@ function renderServerCardBody(update, serverId) {
       groupClass: "system",
       open: false,
       serverId,
-      summaryBadgeHtml: renderFreshnessBadge(freshness.system, {
-        liveSuffix: metricsStreamLiveSuffix(update, "system", freshness.system),
-      }),
+      summaryBadgeHtml: renderFreshnessBadge(freshness.system),
     });
   }
 
@@ -802,9 +777,7 @@ function renderServerCardBody(update, serverId) {
       groupClass: "gpu",
       open: false,
       serverId,
-      summaryBadgeHtml: renderFreshnessBadge(freshness.gpu, {
-        liveSuffix: metricsStreamLiveSuffix(update, "gpu", freshness.gpu),
-      }),
+      summaryBadgeHtml: renderFreshnessBadge(freshness.gpu),
     });
   }
 
@@ -813,7 +786,6 @@ function renderServerCardBody(update, serverId) {
       groupClass: "git",
       open: false,
       serverId,
-      summaryBadgeHtml: renderFreshnessBadge(freshness.git),
     });
   }
 
@@ -822,7 +794,6 @@ function renderServerCardBody(update, serverId) {
       groupClass: "clash",
       open: false,
       serverId,
-      summaryBadgeHtml: renderFreshnessBadge(freshness.clash),
     });
   }
 

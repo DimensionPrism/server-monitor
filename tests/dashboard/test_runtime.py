@@ -2639,7 +2639,7 @@ async def test_runtime_metrics_stream_poll_once_only_runs_git_and_clash_status()
 
 
 @pytest.mark.asyncio
-async def test_runtime_metrics_stream_health_uses_stream_state_instead_of_latency():
+async def test_runtime_metrics_stream_health_reports_transport_latency():
     from server_monitor.dashboard.metrics_stream_protocol import MetricsStreamSample
     from server_monitor.dashboard.runtime import DashboardRuntime
     from server_monitor.dashboard.ws_hub import WebSocketHub
@@ -2670,11 +2670,12 @@ async def test_runtime_metrics_stream_health_uses_stream_state_instead_of_latenc
 
     await runtime.start()
     await metrics_stream_manager.emit_state("server-stream-health", "live")
+    sample_server_time = datetime.now(UTC).isoformat()
     await metrics_stream_manager.emit_sample(
         "server-stream-health",
         MetricsStreamSample(
             sequence=1,
-            server_time="2026-03-12T12:00:00+00:00",
+            server_time=sample_server_time,
             sample_interval_ms=250,
             cpu_percent=11.0,
             memory_percent=22.0,
@@ -2688,11 +2689,13 @@ async def test_runtime_metrics_stream_health_uses_stream_state_instead_of_latenc
 
     payload = ws.messages[-1]
     assert payload["command_health"]["system"]["state"] == "healthy"
-    assert payload["command_health"]["system"]["label"] == "live"
-    assert payload["command_health"]["system"]["latency_ms"] is None
+    assert payload["command_health"]["system"]["latency_ms"] is not None
+    assert payload["command_health"]["system"]["latency_ms"] >= 0
+    assert payload["command_health"]["system"]["label"] == f'{payload["command_health"]["system"]["latency_ms"]}ms'
     assert payload["command_health"]["gpu"]["state"] == "healthy"
-    assert payload["command_health"]["gpu"]["label"] == "live"
-    assert payload["command_health"]["gpu"]["latency_ms"] is None
+    assert payload["command_health"]["gpu"]["latency_ms"] is not None
+    assert payload["command_health"]["gpu"]["latency_ms"] >= 0
+    assert payload["command_health"]["gpu"]["label"] == f'{payload["command_health"]["gpu"]["latency_ms"]}ms'
 
 
 @pytest.mark.asyncio
@@ -2758,3 +2761,34 @@ async def test_runtime_metrics_stream_cached_disconnect_keeps_last_sample_visibl
     assert payload["command_health"]["system"]["label"] == "reconnecting"
     assert payload["command_health"]["gpu"]["state"] == "retrying"
     assert payload["command_health"]["gpu"]["label"] == "reconnecting"
+
+
+def test_metrics_stream_transport_latency_rejects_clock_skew_and_implausible_outliers():
+    from server_monitor.dashboard.runtime import _metrics_stream_transport_latency_ms
+
+    received_at = datetime(2026, 3, 13, 12, 0, 0, tzinfo=UTC)
+
+    assert (
+        _metrics_stream_transport_latency_ms(
+            sample_server_time="2026-03-13T12:00:02+00:00",
+            received_at=received_at,
+            sample_interval_ms=250,
+        )
+        is None
+    )
+    assert (
+        _metrics_stream_transport_latency_ms(
+            sample_server_time="2026-03-13T11:59:50+00:00",
+            received_at=received_at,
+            sample_interval_ms=250,
+        )
+        is None
+    )
+    assert (
+        _metrics_stream_transport_latency_ms(
+            sample_server_time="2026-03-13T11:59:59.680+00:00",
+            received_at=received_at,
+            sample_interval_ms=250,
+        )
+        == 320
+    )
