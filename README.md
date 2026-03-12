@@ -11,6 +11,10 @@ Local dashboard for monitoring remote GPU servers over SSH aliases in a single b
 - Multi-GPU summary signal on each card (`active/total` devices plus `peak` utilization)
 - Secret-aware Clash API/UI reachability checks with configurable probe URLs
 - One-click Clash UI tunnel-open action from the Clash panel
+- Batched SSH polling for the live dashboard shape:
+  - one transport round trip for `system` + `gpu`
+  - one transport round trip for combined `git` + `clash`
+- Persistent per-alias SSH shell reuse for batched polls, with automatic fallback to one-shot SSH when the session breaks
 - Clash UI login assist from dashboard:
   - auto-construct setup/login URL after tunnel open
   - copy Clash secret from card (`Copy Secret`)
@@ -102,10 +106,16 @@ Notes:
 - Clash panel can open/reuse a local SSH forward and launch the remote Clash UI in a browser tab.
 - Clash tunnel-open now returns secret/login context; UI will auto-open setup URL when available and try to copy secret to clipboard.
 - Status polling now runs on a non-blocking background path so stalled SSH status commands no longer block dashboard cycles or overwrite the last good Clash snapshot on transient secret command failures.
+- Batched polling keeps card detail and freshness the same while lowering SSH setup overhead on the default dashboard card mix.
+- Batched polls prefer a persistent SSH shell per alias and automatically retry through the existing one-shot SSH path if the persistent transport fails.
 - Clash reachability treats HTTP redirects (`3xx`) as reachable to support `/ui` -> `/ui/` style responses.
 - Recent command health is kept in memory so repeated transient failures can retry in a bounded way and briefly cool down before the next attempt.
 - `GET /api/diagnostics` returns a redaction-safe JSON bundle of current settings and recent command outcomes for debugging/sharing.
 - The monitor toolbar can export the diagnostics bundle directly as a timestamped JSON download.
+- A quick latency check after launch:
+  - start the dashboard
+  - open `GET /api/diagnostics`
+  - compare the latest `duration_ms` values for `system`, `gpu`, `git_status`, `clash_secret`, and `clash_probe`
 - Failure notifications are evaluated in the open browser session from live `command_health` updates and only fire on new degraded transitions.
 
 ## Testing

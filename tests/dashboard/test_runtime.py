@@ -1,5 +1,6 @@
 import asyncio
 from dataclasses import dataclass
+import re
 import time
 
 import pytest
@@ -35,9 +36,48 @@ class _FakeExecutor:
     def __init__(self):
         self.calls = []
 
-    async def run(self, alias: str, remote_command: str):
-        self.calls.append((alias, remote_command))
+    async def run(self, alias: str, remote_command: str, timeout_seconds: float | None = None):
+        self.calls.append((alias, remote_command, timeout_seconds))
 
+        if "SMTOKEN BEGIN kind=system target=server" in remote_command and "nvidia-smi" in remote_command:
+            return _Result(
+                "SMTOKEN BEGIN kind=system target=server exit=0 duration_ms=111 stream=stdout\n"
+                "CPU: 11.0\n"
+                "MEM: 22.0\n"
+                "DISK: 33.0\n"
+                "RX_KBPS: 0\n"
+                "TX_KBPS: 0\n"
+                "SMTOKEN END\n"
+                "SMTOKEN BEGIN kind=gpu target=server exit=0 duration_ms=98 stream=stdout\n"
+                "0, NVIDIA A100, 70, 1024, 40960, 50\n"
+                "SMTOKEN END\n"
+            )
+        if "SMTOKEN BEGIN kind=git_status target=" in remote_command and "SMTOKEN BEGIN kind=clash_secret target=server" in remote_command:
+            repo_paths = re.findall(r"kind=git_status target=([^ ]+)", remote_command)
+            repo_sections = "".join(
+                _batch_stdout_section(
+                    kind="git_status",
+                    target=repo_path,
+                    payload="## main...origin/main\n M README.md\n",
+                    duration_ms=120,
+                )
+                for repo_path in repo_paths
+            )
+            return _Result(
+                repo_sections
+                + _batch_stdout_section(
+                    kind="clash_secret",
+                    target="server",
+                    payload="😼 当前密钥：mysecret\n",
+                    duration_ms=90,
+                )
+                + _batch_stdout_section(
+                    kind="clash_probe",
+                    target="server",
+                    payload="running=true\napi_reachable=true\nui_reachable=true\nmessage=ok\n",
+                    duration_ms=95,
+                )
+            )
         if "clashsecret" in remote_command:
             return _Result("😼 当前密钥：mysecret")
         if "nvidia-smi" in remote_command:
@@ -151,19 +191,28 @@ class _DelayedExecutor:
 class _FlakyMetricsExecutor:
     def __init__(self):
         self.calls = []
-        self._system_calls = 0
-        self._gpu_calls = 0
+        self._metrics_batch_calls = 0
 
     async def run(self, alias: str, remote_command: str, timeout_seconds: float | None = None):
         self.calls.append((alias, remote_command, timeout_seconds))
-        if "nvidia-smi" in remote_command:
-            self._gpu_calls += 1
-            if self._gpu_calls == 1:
-                return _Result("0, NVIDIA A100, 70, 1024, 40960, 50")
+        if "SMTOKEN BEGIN kind=system target=server" in remote_command and "nvidia-smi" in remote_command:
+            self._metrics_batch_calls += 1
+            if self._metrics_batch_calls == 1:
+                return _Result(
+                    "SMTOKEN BEGIN kind=system target=server exit=0 duration_ms=111 stream=stdout\n"
+                    "CPU: 11.0\n"
+                    "MEM: 22.0\n"
+                    "DISK: 33.0\n"
+                    "RX_KBPS: 0\n"
+                    "TX_KBPS: 0\n"
+                    "SMTOKEN END\n"
+                    "SMTOKEN BEGIN kind=gpu target=server exit=0 duration_ms=98 stream=stdout\n"
+                    "0, NVIDIA A100, 70, 1024, 40960, 50\n"
+                    "SMTOKEN END\n"
+                )
             return _Result("", stderr="timeout", exit_code=-1, error="timeout")
-        self._system_calls += 1
-        if self._system_calls == 1:
-            return _Result("CPU: 11.0\nMEM: 22.0\nDISK: 33.0\nRX_KBPS: 0\nTX_KBPS: 0")
+        if "nvidia-smi" in remote_command:
+            return _Result("0, NVIDIA A100, 70, 1024, 40960, 50")
         return _Result("", stderr="timeout", exit_code=-1, error="timeout")
 
 
@@ -356,6 +405,212 @@ class _RecoveredSystemRetryExecutor:
         return _Result("")
 
 
+class _MetricsBatchExecutor:
+    def __init__(self):
+        self.calls = []
+
+    async def run(self, alias: str, remote_command: str, timeout_seconds: float | None = None):
+        self.calls.append((alias, remote_command, timeout_seconds))
+        return _Result(
+            "SMTOKEN BEGIN kind=system target=server exit=0 duration_ms=111 stream=stdout\n"
+            "CPU: 11.0\n"
+            "MEM: 22.0\n"
+            "DISK: 33.0\n"
+            "RX_KBPS: 0\n"
+            "TX_KBPS: 0\n"
+            "SMTOKEN END\n"
+            "SMTOKEN BEGIN kind=gpu target=server exit=0 duration_ms=98 stream=stdout\n"
+            "0, NVIDIA A100, 70, 1024, 40960, 50\n"
+            "SMTOKEN END\n"
+        )
+
+
+def _batch_stdout_section(*, kind: str, target: str, payload: str, exit_code: int = 0, duration_ms: int = 100) -> str:
+    normalized_payload = payload if payload.endswith("\n") else f"{payload}\n"
+    return (
+        f"SMTOKEN BEGIN kind={kind} target={target} exit={exit_code} duration_ms={duration_ms} stream=stdout\n"
+        f"{normalized_payload}"
+        "SMTOKEN END\n"
+    )
+
+
+def _batch_stderr_section(*, kind: str, target: str, payload: str, exit_code: int = 1, duration_ms: int = 100) -> str:
+    normalized_payload = payload if payload.endswith("\n") else f"{payload}\n"
+    return (
+        f"SMTOKEN BEGIN kind={kind} target={target} exit={exit_code} duration_ms={duration_ms} stream=stderr\n"
+        f"{normalized_payload}"
+        "SMTOKEN END\n"
+    )
+
+
+class _StatusBatchExecutor:
+    def __init__(self):
+        self.calls = []
+        self._status_calls = 0
+
+    async def run(self, alias: str, remote_command: str, timeout_seconds: float | None = None):
+        self.calls.append((alias, remote_command, timeout_seconds))
+        self._status_calls += 1
+        if self._status_calls == 1:
+            return _Result(
+                _batch_stdout_section(
+                    kind="git_status",
+                    target="/work/repo-a",
+                    payload="## main...origin/main\n M README.md\n",
+                    duration_ms=120,
+                )
+                + _batch_stdout_section(
+                    kind="git_status",
+                    target="/work/repo-b",
+                    payload="## main...origin/main\n",
+                    duration_ms=110,
+                )
+                + _batch_stdout_section(
+                    kind="clash_secret",
+                    target="server",
+                    payload="😼 当前密钥：mysecret\n",
+                    duration_ms=90,
+                )
+                + _batch_stdout_section(
+                    kind="clash_probe",
+                    target="server",
+                    payload="running=true\napi_reachable=true\nui_reachable=true\nmessage=ok\n",
+                    duration_ms=95,
+                )
+            )
+        return _Result(
+            _batch_stdout_section(
+                kind="git_status",
+                target="/work/repo-a",
+                payload="## main...origin/main\n M README.md\n",
+                duration_ms=120,
+            )
+            + _batch_stdout_section(
+                kind="git_status",
+                target="/work/repo-b",
+                payload="",
+                exit_code=1,
+                duration_ms=115,
+            )
+            + _batch_stderr_section(
+                kind="git_status",
+                target="/work/repo-b",
+                payload="temporary git status failure\n",
+                exit_code=1,
+                duration_ms=115,
+            )
+            + _batch_stdout_section(
+                kind="clash_secret",
+                target="server",
+                payload="😼 当前密钥：mysecret\n",
+                duration_ms=90,
+            )
+            + _batch_stdout_section(
+                kind="clash_probe",
+                target="server",
+                payload="running=true\napi_reachable=true\nui_reachable=true\nmessage=ok\n",
+                duration_ms=95,
+            )
+        )
+
+
+class _StatusBatchSecretFailureExecutor:
+    def __init__(self):
+        self.calls = []
+        self._status_calls = 0
+
+    async def run(self, alias: str, remote_command: str, timeout_seconds: float | None = None):
+        self.calls.append((alias, remote_command, timeout_seconds))
+        self._status_calls += 1
+        if self._status_calls == 1:
+            return _Result(
+                _batch_stdout_section(
+                    kind="git_status",
+                    target="/work/repo-a",
+                    payload="## main...origin/main\n",
+                    duration_ms=120,
+                )
+                + _batch_stdout_section(
+                    kind="clash_secret",
+                    target="server",
+                    payload="😼 当前密钥：mysecret\n",
+                    duration_ms=90,
+                )
+                + _batch_stdout_section(
+                    kind="clash_probe",
+                    target="server",
+                    payload="running=true\napi_reachable=true\nui_reachable=true\nmessage=ok\n",
+                    duration_ms=95,
+                )
+            )
+        return _Result(
+            _batch_stdout_section(
+                kind="git_status",
+                target="/work/repo-a",
+                payload="## main...origin/main\n",
+                duration_ms=120,
+            )
+            + _batch_stdout_section(
+                kind="clash_secret",
+                target="server",
+                payload="",
+                exit_code=1,
+                duration_ms=90,
+            )
+            + _batch_stderr_section(
+                kind="clash_secret",
+                target="server",
+                payload="timeout\n",
+                exit_code=1,
+                duration_ms=90,
+            )
+        )
+
+
+class _HealthyBatchTransport:
+    def __init__(self):
+        self.calls = []
+
+    async def run(self, alias: str, remote_command: str, *, timeout_seconds: float):
+        self.calls.append((alias, remote_command, timeout_seconds))
+        return _Result(
+            "SMTOKEN BEGIN kind=system target=server exit=0 duration_ms=111 stream=stdout\n"
+            "CPU: 11.0\n"
+            "MEM: 22.0\n"
+            "DISK: 33.0\n"
+            "RX_KBPS: 0\n"
+            "TX_KBPS: 0\n"
+            "SMTOKEN END\n"
+            "SMTOKEN BEGIN kind=gpu target=server exit=0 duration_ms=98 stream=stdout\n"
+            "0, NVIDIA A100, 70, 1024, 40960, 50\n"
+            "SMTOKEN END\n"
+        )
+
+
+class _FailingThenHealthyBatchTransport:
+    def __init__(self):
+        self.calls = []
+        self._call_count = 0
+
+    async def run(self, alias: str, remote_command: str, *, timeout_seconds: float):
+        self.calls.append((alias, remote_command, timeout_seconds))
+        self._call_count += 1
+        if self._call_count == 1:
+            raise RuntimeError("persistent transport failed")
+        return _Result(
+            "SMTOKEN BEGIN kind=system target=server exit=0 duration_ms=111 stream=stdout\n"
+            "CPU: 11.0\n"
+            "MEM: 22.0\n"
+            "DISK: 33.0\n"
+            "RX_KBPS: 0\n"
+            "TX_KBPS: 0\n"
+            "SMTOKEN END\n"
+            "SMTOKEN BEGIN kind=gpu target=server exit=0 duration_ms=98 stream=stdout\n"
+            "0, NVIDIA A100, 70, 1024, 40960, 50\n"
+            "SMTOKEN END\n"
+        )
+
+
 class _ConcurrencyTrackingRunner:
     def __init__(self, delay_seconds: float = 0.05):
         self.delay_seconds = delay_seconds
@@ -450,6 +705,233 @@ async def test_runtime_poll_once_broadcasts_agentless_update():
     assert payload["snapshot"]["gpus"][0]["index"] == 0
     assert payload["clash"]["running"] is True
     assert payload["enabled_panels"] == ["system", "gpu", "git", "clash"]
+
+
+@pytest.mark.asyncio
+async def test_runtime_batches_metrics_poll_per_server():
+    from server_monitor.dashboard.runtime import DashboardRuntime
+    from server_monitor.dashboard.ws_hub import WebSocketHub
+
+    settings = DashboardSettings(
+        metrics_interval_seconds=1.0,
+        status_interval_seconds=10.0,
+        servers=[
+            ServerSettings(
+                server_id="server-batched-metrics",
+                ssh_alias="srv-batched-metrics",
+                working_dirs=[],
+                enabled_panels=["system", "gpu"],
+            )
+        ],
+    )
+
+    hub = WebSocketHub()
+    ws = _FakeWebSocket()
+    await hub.connect(ws)
+    executor = _MetricsBatchExecutor()
+    runtime = DashboardRuntime(
+        hub=hub,
+        settings_store=_FakeSettingsStore(settings),
+        executor=executor,
+    )
+
+    await runtime.poll_once()
+
+    payload = ws.messages[0]
+    assert len(executor.calls) == 1
+    assert payload["snapshot"]["cpu_percent"] == 11.0
+    assert payload["snapshot"]["gpus"][0]["name"] == "NVIDIA A100"
+    assert payload["command_health"]["system"]["state"] == "healthy"
+    assert payload["command_health"]["gpu"]["state"] == "healthy"
+
+
+@pytest.mark.asyncio
+async def test_runtime_batches_status_poll_and_keeps_cached_repo_on_single_repo_failure():
+    from server_monitor.dashboard.runtime import DashboardRuntime
+    from server_monitor.dashboard.ws_hub import WebSocketHub
+
+    settings = DashboardSettings(
+        metrics_interval_seconds=1.0,
+        status_interval_seconds=0.0,
+        servers=[
+            ServerSettings(
+                server_id="server-batched-status",
+                ssh_alias="srv-batched-status",
+                working_dirs=["/work/repo-a", "/work/repo-b"],
+                enabled_panels=["git", "clash"],
+            )
+        ],
+    )
+
+    hub = WebSocketHub()
+    ws = _FakeWebSocket()
+    await hub.connect(ws)
+    executor = _StatusBatchExecutor()
+    runtime = DashboardRuntime(
+        hub=hub,
+        settings_store=_FakeSettingsStore(settings),
+        executor=executor,
+    )
+
+    await runtime.poll_once()
+    await runtime.poll_once()
+
+    payload = ws.messages[-1]
+    assert len(executor.calls) == 2
+    assert len(payload["repos"]) == 2
+    assert {repo["path"] for repo in payload["repos"]} == {"/work/repo-a", "/work/repo-b"}
+    assert payload["command_health"]["git"]["state"] == "failed"
+
+
+@pytest.mark.asyncio
+async def test_runtime_prefers_batch_transport_for_metrics_when_available():
+    from server_monitor.dashboard.runtime import DashboardRuntime
+    from server_monitor.dashboard.ws_hub import WebSocketHub
+
+    settings = DashboardSettings(
+        metrics_interval_seconds=1.0,
+        status_interval_seconds=10.0,
+        servers=[
+            ServerSettings(
+                server_id="server-persistent-metrics",
+                ssh_alias="srv-persistent-metrics",
+                working_dirs=[],
+                enabled_panels=["system", "gpu"],
+            )
+        ],
+    )
+
+    hub = WebSocketHub()
+    ws = _FakeWebSocket()
+    await hub.connect(ws)
+    batch_transport = _HealthyBatchTransport()
+    executor = _MetricsBatchExecutor()
+    runtime = DashboardRuntime(
+        hub=hub,
+        settings_store=_FakeSettingsStore(settings),
+        executor=executor,
+        batch_transport=batch_transport,
+    )
+
+    await runtime.poll_once()
+
+    payload = ws.messages[0]
+    assert len(batch_transport.calls) == 1
+    assert executor.calls == []
+    assert payload["snapshot"]["cpu_percent"] == 11.0
+
+
+@pytest.mark.asyncio
+async def test_runtime_falls_back_to_one_shot_executor_when_batch_transport_fails():
+    from server_monitor.dashboard.runtime import DashboardRuntime
+    from server_monitor.dashboard.ws_hub import WebSocketHub
+
+    settings = DashboardSettings(
+        metrics_interval_seconds=1.0,
+        status_interval_seconds=10.0,
+        servers=[
+            ServerSettings(
+                server_id="server-batch-fallback",
+                ssh_alias="srv-batch-fallback",
+                working_dirs=[],
+                enabled_panels=["system", "gpu"],
+            )
+        ],
+    )
+
+    hub = WebSocketHub()
+    ws = _FakeWebSocket()
+    await hub.connect(ws)
+    batch_transport = _FailingThenHealthyBatchTransport()
+    executor = _MetricsBatchExecutor()
+    runtime = DashboardRuntime(
+        hub=hub,
+        settings_store=_FakeSettingsStore(settings),
+        executor=executor,
+        batch_transport=batch_transport,
+    )
+
+    await runtime.poll_once()
+
+    payload = ws.messages[0]
+    assert len(batch_transport.calls) == 1
+    assert len(executor.calls) == 1
+    assert payload["snapshot"]["cpu_percent"] == 11.0
+
+
+@pytest.mark.asyncio
+async def test_runtime_retries_batch_transport_on_later_polls_after_fallback():
+    from server_monitor.dashboard.runtime import DashboardRuntime
+    from server_monitor.dashboard.ws_hub import WebSocketHub
+
+    settings = DashboardSettings(
+        metrics_interval_seconds=1.0,
+        status_interval_seconds=10.0,
+        servers=[
+            ServerSettings(
+                server_id="server-batch-recover",
+                ssh_alias="srv-batch-recover",
+                working_dirs=[],
+                enabled_panels=["system", "gpu"],
+            )
+        ],
+    )
+
+    hub = WebSocketHub()
+    ws = _FakeWebSocket()
+    await hub.connect(ws)
+    batch_transport = _FailingThenHealthyBatchTransport()
+    executor = _MetricsBatchExecutor()
+    runtime = DashboardRuntime(
+        hub=hub,
+        settings_store=_FakeSettingsStore(settings),
+        executor=executor,
+        batch_transport=batch_transport,
+    )
+
+    await runtime.poll_once()
+    await runtime.poll_once()
+
+    assert len(batch_transport.calls) == 2
+    assert len(executor.calls) == 1
+    assert ws.messages[-1]["snapshot"]["cpu_percent"] == 11.0
+
+
+@pytest.mark.asyncio
+async def test_runtime_keeps_cached_clash_snapshot_when_batched_secret_check_fails():
+    from server_monitor.dashboard.runtime import DashboardRuntime
+    from server_monitor.dashboard.ws_hub import WebSocketHub
+
+    settings = DashboardSettings(
+        metrics_interval_seconds=1.0,
+        status_interval_seconds=0.0,
+        servers=[
+            ServerSettings(
+                server_id="server-batched-clash",
+                ssh_alias="srv-batched-clash",
+                working_dirs=["/work/repo-a"],
+                enabled_panels=["git", "clash"],
+            )
+        ],
+    )
+
+    hub = WebSocketHub()
+    ws = _FakeWebSocket()
+    await hub.connect(ws)
+    executor = _StatusBatchSecretFailureExecutor()
+    runtime = DashboardRuntime(
+        hub=hub,
+        settings_store=_FakeSettingsStore(settings),
+        executor=executor,
+    )
+
+    await runtime.poll_once()
+    await runtime.poll_once()
+
+    payload = ws.messages[-1]
+    assert len(executor.calls) == 2
+    assert payload["clash"]["running"] is True
+    assert payload["clash"]["message"] == "ok"
 
 
 @pytest.mark.asyncio
@@ -1402,6 +1884,14 @@ def test_metrics_sleep_seconds_compensates_poll_time():
 
     assert _metrics_sleep_seconds(interval_seconds=1.0, elapsed_seconds=0.25) == pytest.approx(0.75)
     assert _metrics_sleep_seconds(interval_seconds=1.0, elapsed_seconds=1.6) == pytest.approx(0.05)
+
+
+def test_batched_clash_secret_command_runs_lookup_in_child_shell():
+    from server_monitor.dashboard.runtime import _batched_clash_secret_command
+
+    command = _batched_clash_secret_command()
+
+    assert "sh -lc" in command
 
 
 @pytest.mark.asyncio

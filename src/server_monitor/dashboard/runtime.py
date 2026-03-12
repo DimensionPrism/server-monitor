@@ -7,8 +7,15 @@ from contextlib import suppress
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 import re
+from types import SimpleNamespace
 import time
 
+from server_monitor.dashboard.batch_protocol import (
+    BatchProtocolError,
+    build_metrics_batch_command,
+    build_status_batch_command,
+    parse_batch_output,
+)
 from server_monitor.dashboard.command_policy import (
     CommandHealthRecord,
     CommandKind,
@@ -86,12 +93,14 @@ class DashboardRuntime:
         hub: WebSocketHub,
         settings_store: DashboardSettingsStore,
         executor,
+        batch_transport=None,
         terminal_launcher=open_terminal_with_ssh,
         stale_after_seconds: float = 15.0,
     ) -> None:
         self.hub = hub
         self.settings_store = settings_store
         self.executor = executor
+        self.batch_transport = batch_transport
         self.terminal_launcher = terminal_launcher
         self.stale_after_seconds = stale_after_seconds
         self._task: asyncio.Task | None = None
@@ -135,6 +144,8 @@ class DashboardRuntime:
             with suppress(asyncio.CancelledError):
                 await task
         self._status_poll_tasks.clear()
+        if self.batch_transport is not None and hasattr(self.batch_transport, "close"):
+            await self.batch_transport.close()
 
     async def poll_once(self) -> None:
         settings = self.settings_store.load()
@@ -193,39 +204,7 @@ class DashboardRuntime:
         }
         host_unreachable = False
 
-        metric_tasks: dict[str, asyncio.Task] = {}
-        if "system" in enabled:
-            metric_tasks["system"] = asyncio.create_task(
-                self._execute_with_policy(
-                    server_id=server.server_id,
-                    ssh_alias=server.ssh_alias,
-                    command_kind=CommandKind.SYSTEM,
-                    target_label="server",
-                    remote_command=_system_command(),
-                    policy=self._command_policies[CommandKind.SYSTEM],
-                    parse_output=parse_system_snapshot,
-                    cache_used=server.server_id in self._system_cache,
-                )
-            )
-        if "gpu" in enabled:
-            metric_tasks["gpu"] = asyncio.create_task(
-                self._execute_with_policy(
-                    server_id=server.server_id,
-                    ssh_alias=server.ssh_alias,
-                    command_kind=CommandKind.GPU,
-                    target_label="server",
-                    remote_command=_gpu_command(),
-                    policy=self._command_policies[CommandKind.GPU],
-                    parse_output=parse_gpu_snapshot,
-                    cache_used=server.server_id in self._gpu_cache,
-                )
-            )
-
-        metric_results: dict[str, object] = {}
-        if metric_tasks:
-            gathered = await asyncio.gather(*metric_tasks.values())
-            for key, result in zip(metric_tasks.keys(), gathered):
-                metric_results[key] = result
+        metric_results = await self._poll_metrics(server=server)
 
         if "system" in metric_results:
             system_execution = metric_results["system"]
@@ -361,6 +340,137 @@ class DashboardRuntime:
         )
         await self.hub.broadcast(normalized)
 
+    async def _poll_metrics(self, *, server: ServerSettings) -> dict[str, _PolicyExecutionOutcome]:
+        enabled = set(server.enabled_panels)
+        if "system" in enabled and "gpu" in enabled:
+            return await self._poll_metrics_batch(server=server)
+
+        metric_tasks: dict[str, asyncio.Task] = {}
+        if "system" in enabled:
+            metric_tasks["system"] = asyncio.create_task(
+                self._execute_with_policy(
+                    server_id=server.server_id,
+                    ssh_alias=server.ssh_alias,
+                    command_kind=CommandKind.SYSTEM,
+                    target_label="server",
+                    remote_command=_system_command(),
+                    policy=self._command_policies[CommandKind.SYSTEM],
+                    parse_output=parse_system_snapshot,
+                    cache_used=server.server_id in self._system_cache,
+                )
+            )
+        if "gpu" in enabled:
+            metric_tasks["gpu"] = asyncio.create_task(
+                self._execute_with_policy(
+                    server_id=server.server_id,
+                    ssh_alias=server.ssh_alias,
+                    command_kind=CommandKind.GPU,
+                    target_label="server",
+                    remote_command=_gpu_command(),
+                    policy=self._command_policies[CommandKind.GPU],
+                    parse_output=parse_gpu_snapshot,
+                    cache_used=server.server_id in self._gpu_cache,
+                )
+            )
+
+        metric_results: dict[str, _PolicyExecutionOutcome] = {}
+        if metric_tasks:
+            gathered = await asyncio.gather(*metric_tasks.values())
+            for key, result in zip(metric_tasks.keys(), gathered):
+                metric_results[key] = result
+        return metric_results
+
+    async def _poll_metrics_batch(self, *, server: ServerSettings) -> dict[str, _PolicyExecutionOutcome]:
+        token = "SMTOKEN"
+        batch_timeout_seconds = max(
+            self._command_policies[CommandKind.SYSTEM].timeout_seconds,
+            self._command_policies[CommandKind.GPU].timeout_seconds,
+        )
+        batch_command = build_metrics_batch_command(
+            token=token,
+            system_command=_system_command(),
+            gpu_command=_gpu_command(),
+        )
+        batch_result = await self._run_batch_executor(
+            server.ssh_alias,
+            batch_command,
+            timeout_seconds=batch_timeout_seconds,
+        )
+        batch_duration_ms = int(getattr(batch_result, "duration_ms", 0))
+
+        if batch_result.exit_code != 0 and not batch_result.stdout:
+            return {
+                "system": self._record_batch_failure(
+                    server_id=server.server_id,
+                    command_kind=CommandKind.SYSTEM,
+                    target_label="server",
+                    result=batch_result,
+                    policy=self._command_policies[CommandKind.SYSTEM],
+                    cache_used=server.server_id in self._system_cache,
+                ),
+                "gpu": self._record_batch_failure(
+                    server_id=server.server_id,
+                    command_kind=CommandKind.GPU,
+                    target_label="server",
+                    result=batch_result,
+                    policy=self._command_policies[CommandKind.GPU],
+                    cache_used=server.server_id in self._gpu_cache,
+                ),
+            }
+
+        try:
+            sections = parse_batch_output(batch_result.stdout, token=token)
+        except BatchProtocolError as exc:
+            malformed_result = SimpleNamespace(
+                stdout=batch_result.stdout,
+                stderr=str(exc),
+                exit_code=-1,
+                duration_ms=batch_duration_ms,
+                error="parse_error",
+            )
+            return {
+                "system": self._record_batch_failure(
+                    server_id=server.server_id,
+                    command_kind=CommandKind.SYSTEM,
+                    target_label="server",
+                    result=malformed_result,
+                    policy=self._command_policies[CommandKind.SYSTEM],
+                    cache_used=server.server_id in self._system_cache,
+                ),
+                "gpu": self._record_batch_failure(
+                    server_id=server.server_id,
+                    command_kind=CommandKind.GPU,
+                    target_label="server",
+                    result=malformed_result,
+                    policy=self._command_policies[CommandKind.GPU],
+                    cache_used=server.server_id in self._gpu_cache,
+                ),
+            }
+
+        grouped_sections = _group_batch_sections(sections)
+        return {
+            "system": self._record_batch_section_outcome(
+                server_id=server.server_id,
+                command_kind=CommandKind.SYSTEM,
+                target_label="server",
+                section_group=grouped_sections.get(("system", "server")),
+                policy=self._command_policies[CommandKind.SYSTEM],
+                parse_output=parse_system_snapshot,
+                cache_used=server.server_id in self._system_cache,
+                fallback_duration_ms=batch_duration_ms,
+            ),
+            "gpu": self._record_batch_section_outcome(
+                server_id=server.server_id,
+                command_kind=CommandKind.GPU,
+                target_label="server",
+                section_group=grouped_sections.get(("gpu", "server")),
+                policy=self._command_policies[CommandKind.GPU],
+                parse_output=parse_gpu_snapshot,
+                cache_used=server.server_id in self._gpu_cache,
+                fallback_duration_ms=batch_duration_ms,
+            ),
+        }
+
     def _is_status_poll_inflight(self, server_id: str) -> bool:
         task = self._status_poll_tasks.get(server_id)
         return task is not None and not task.done()
@@ -410,41 +520,261 @@ class DashboardRuntime:
         previous_repos = [
             repo for repo in self._repo_cache.get(server.server_id, []) if repo.get("path") in allowed_paths
         ]
-        status_tasks: dict[str, asyncio.Task] = {}
+        if not ("git" in enabled and "clash" in enabled):
+            status_tasks: dict[str, asyncio.Task] = {}
+
+            if "git" in enabled:
+                status_tasks["git"] = asyncio.create_task(
+                    self._poll_git_repos(server, previous_repos=previous_repos, polled_at_iso=polled_at_iso)
+                )
+
+            if "clash" in enabled:
+                secret_execution = await self._execute_with_policy(
+                    server_id=server.server_id,
+                    ssh_alias=server.ssh_alias,
+                    command_kind=CommandKind.CLASH_SECRET,
+                    target_label="server",
+                    remote_command=_clash_secret_command(),
+                    policy=self._command_policies[CommandKind.CLASH_SECRET],
+                    parse_output=_parse_required_clash_secret,
+                    cache_used=server.server_id in self._clash_cache,
+                )
+                if secret_execution.failure_class == "ok":
+                    status_tasks["clash"] = asyncio.create_task(
+                        self._execute_with_policy(
+                            server_id=server.server_id,
+                            ssh_alias=server.ssh_alias,
+                            command_kind=CommandKind.CLASH_PROBE,
+                            target_label="server",
+                            remote_command=_clash_command(
+                                api_probe_url=server.clash_api_probe_url,
+                                ui_probe_url=server.clash_ui_probe_url,
+                                secret=secret_execution.parsed,
+                            ),
+                            policy=self._command_policies[CommandKind.CLASH_PROBE],
+                            parse_output=parse_clash_status,
+                            cache_used=server.server_id in self._clash_cache,
+                        )
+                    )
+                elif secret_execution.failure_class == "parse_error" and secret_execution.message == "secret-unavailable":
+                    clash = dict(self._clash_cache.get(server.server_id, DEFAULT_CLASH))
+                    clash["api_reachable"] = False
+                    clash["ui_reachable"] = False
+                    clash["message"] = "secret-unavailable"
+                    clash["last_updated_at"] = polled_at_iso
+                    self._clash_cache[server.server_id] = clash
+                    self._clash_last_updated_at[server.server_id] = polled_at_iso
+                    self._clash_last_poll_ok[server.server_id] = False
+                else:
+                    # Transient secret command failures should not overwrite last good clash snapshot.
+                    self._clash_last_poll_ok[server.server_id] = False
+
+            status_results: dict[str, object] = {}
+            if status_tasks:
+                gathered = await asyncio.gather(*status_tasks.values(), return_exceptions=True)
+                for key, result in zip(status_tasks.keys(), gathered):
+                    status_results[key] = result
+
+            if "git" in status_results:
+                git_result = status_results["git"]
+                if isinstance(git_result, Exception):
+                    self._git_last_poll_ok[server.server_id] = False
+                else:
+                    polled_repos, successful_polls, repo_poll_ok = git_result
+                    total_repos = len(server.working_dirs)
+                    self._git_last_poll_ok[server.server_id] = successful_polls == total_repos
+                    self._repo_last_poll_ok[server.server_id] = repo_poll_ok
+                    if successful_polls > 0 or len(previous_repos) == 0:
+                        self._repo_cache[server.server_id] = polled_repos
+                        self._git_last_updated_at[server.server_id] = polled_at_iso
+
+            if "clash" in status_results:
+                clash_execution = status_results["clash"]
+                if isinstance(clash_execution, Exception):
+                    self._clash_last_poll_ok[server.server_id] = False
+                elif clash_execution.failure_class == "ok":
+                    clash = clash_execution.parsed
+                    clash["last_updated_at"] = polled_at_iso
+                    self._clash_cache[server.server_id] = clash
+                    self._clash_last_updated_at[server.server_id] = polled_at_iso
+                    self._clash_last_poll_ok[server.server_id] = True
+                else:
+                    self._clash_last_poll_ok[server.server_id] = False
+            return
+
+        previous_by_path = {
+            repo.get("path"): repo
+            for repo in previous_repos
+            if isinstance(repo, dict) and isinstance(repo.get("path"), str)
+        }
+
+        git_commands = [(repo_path, _git_status_command(repo_path)) for repo_path in server.working_dirs] if "git" in enabled else []
+        batch_command = build_status_batch_command(
+            token="SMTOKEN",
+            git_commands=git_commands,
+            clash_secret_command=_batched_clash_secret_command() if "clash" in enabled else "true",
+            clash_probe_command=(
+                _batched_clash_probe_command(
+                    api_probe_url=server.clash_api_probe_url,
+                    ui_probe_url=server.clash_ui_probe_url,
+                )
+                if "clash" in enabled
+                else "true"
+            ),
+        )
+        batch_timeout_seconds = max(
+            self._command_policies[CommandKind.GIT_STATUS].timeout_seconds if "git" in enabled else 0.0,
+            self._command_policies[CommandKind.CLASH_SECRET].timeout_seconds if "clash" in enabled else 0.0,
+            self._command_policies[CommandKind.CLASH_PROBE].timeout_seconds if "clash" in enabled else 0.0,
+        )
+        batch_result = await self._run_batch_executor(
+            server.ssh_alias,
+            batch_command,
+            timeout_seconds=batch_timeout_seconds,
+        )
+        batch_duration_ms = int(getattr(batch_result, "duration_ms", 0))
+
+        if batch_result.exit_code != 0 and not batch_result.stdout:
+            if "git" in enabled:
+                self._git_last_poll_ok[server.server_id] = False
+                self._repo_last_poll_ok[server.server_id] = {repo_path: False for repo_path in server.working_dirs}
+                for repo_path in server.working_dirs:
+                    self._record_batch_failure(
+                        server_id=server.server_id,
+                        command_kind=CommandKind.GIT_STATUS,
+                        target_label=repo_path,
+                        result=batch_result,
+                        policy=self._command_policies[CommandKind.GIT_STATUS],
+                        cache_used=previous_by_path.get(repo_path) is not None,
+                    )
+            if "clash" in enabled:
+                self._clash_last_poll_ok[server.server_id] = False
+                self._record_batch_failure(
+                    server_id=server.server_id,
+                    command_kind=CommandKind.CLASH_SECRET,
+                    target_label="server",
+                    result=batch_result,
+                    policy=self._command_policies[CommandKind.CLASH_SECRET],
+                    cache_used=server.server_id in self._clash_cache,
+                )
+                self._record_batch_failure(
+                    server_id=server.server_id,
+                    command_kind=CommandKind.CLASH_PROBE,
+                    target_label="server",
+                    result=batch_result,
+                    policy=self._command_policies[CommandKind.CLASH_PROBE],
+                    cache_used=server.server_id in self._clash_cache,
+                )
+            return
+
+        try:
+            sections = parse_batch_output(batch_result.stdout, token="SMTOKEN")
+        except BatchProtocolError as exc:
+            malformed_result = SimpleNamespace(
+                stdout=batch_result.stdout,
+                stderr=str(exc),
+                exit_code=-1,
+                duration_ms=batch_duration_ms,
+                error="parse_error",
+            )
+            if "git" in enabled:
+                self._git_last_poll_ok[server.server_id] = False
+                self._repo_last_poll_ok[server.server_id] = {repo_path: False for repo_path in server.working_dirs}
+                for repo_path in server.working_dirs:
+                    self._record_batch_failure(
+                        server_id=server.server_id,
+                        command_kind=CommandKind.GIT_STATUS,
+                        target_label=repo_path,
+                        result=malformed_result,
+                        policy=self._command_policies[CommandKind.GIT_STATUS],
+                        cache_used=previous_by_path.get(repo_path) is not None,
+                    )
+            if "clash" in enabled:
+                self._clash_last_poll_ok[server.server_id] = False
+                self._record_batch_failure(
+                    server_id=server.server_id,
+                    command_kind=CommandKind.CLASH_SECRET,
+                    target_label="server",
+                    result=malformed_result,
+                    policy=self._command_policies[CommandKind.CLASH_SECRET],
+                    cache_used=server.server_id in self._clash_cache,
+                )
+                self._record_batch_failure(
+                    server_id=server.server_id,
+                    command_kind=CommandKind.CLASH_PROBE,
+                    target_label="server",
+                    result=malformed_result,
+                    policy=self._command_policies[CommandKind.CLASH_PROBE],
+                    cache_used=server.server_id in self._clash_cache,
+                )
+            return
+
+        grouped_sections = _group_batch_sections(sections)
 
         if "git" in enabled:
-            status_tasks["git"] = asyncio.create_task(
-                self._poll_git_repos(server, previous_repos=previous_repos, polled_at_iso=polled_at_iso)
-            )
+            repos: list[dict] = []
+            successful_polls = 0
+            repo_poll_ok: dict[str, bool] = {}
+            for repo_path in server.working_dirs:
+                execution = self._record_batch_section_outcome(
+                    server_id=server.server_id,
+                    command_kind=CommandKind.GIT_STATUS,
+                    target_label=repo_path,
+                    section_group=grouped_sections.get(("git_status", repo_path)),
+                    policy=self._command_policies[CommandKind.GIT_STATUS],
+                    parse_output=lambda stdout, repo_path=repo_path: parse_repo_status(
+                        path=repo_path,
+                        porcelain_text=stdout,
+                        last_commit_age_seconds=0,
+                    ),
+                    cache_used=previous_by_path.get(repo_path) is not None,
+                    fallback_duration_ms=batch_duration_ms,
+                )
+                success = execution.failure_class == "ok"
+                repo_poll_ok[repo_path] = success
+                if success:
+                    repo = execution.parsed
+                    repo["last_updated_at"] = polled_at_iso
+                    repos.append(repo)
+                    successful_polls += 1
+                elif previous_repo := previous_by_path.get(repo_path):
+                    repos.append(previous_repo)
+            self._git_last_poll_ok[server.server_id] = successful_polls == len(server.working_dirs)
+            self._repo_last_poll_ok[server.server_id] = repo_poll_ok
+            if successful_polls > 0 or len(previous_repos) == 0:
+                self._repo_cache[server.server_id] = repos
+                self._git_last_updated_at[server.server_id] = polled_at_iso
 
         if "clash" in enabled:
-            secret_execution = await self._execute_with_policy(
+            secret_execution = self._record_batch_section_outcome(
                 server_id=server.server_id,
-                ssh_alias=server.ssh_alias,
                 command_kind=CommandKind.CLASH_SECRET,
                 target_label="server",
-                remote_command=_clash_secret_command(),
+                section_group=grouped_sections.get(("clash_secret", "server")),
                 policy=self._command_policies[CommandKind.CLASH_SECRET],
                 parse_output=_parse_required_clash_secret,
                 cache_used=server.server_id in self._clash_cache,
+                fallback_duration_ms=batch_duration_ms,
             )
             if secret_execution.failure_class == "ok":
-                status_tasks["clash"] = asyncio.create_task(
-                    self._execute_with_policy(
-                        server_id=server.server_id,
-                        ssh_alias=server.ssh_alias,
-                        command_kind=CommandKind.CLASH_PROBE,
-                        target_label="server",
-                        remote_command=_clash_command(
-                            api_probe_url=server.clash_api_probe_url,
-                            ui_probe_url=server.clash_ui_probe_url,
-                            secret=secret_execution.parsed,
-                        ),
-                        policy=self._command_policies[CommandKind.CLASH_PROBE],
-                        parse_output=parse_clash_status,
-                        cache_used=server.server_id in self._clash_cache,
-                    )
+                clash_execution = self._record_batch_section_outcome(
+                    server_id=server.server_id,
+                    command_kind=CommandKind.CLASH_PROBE,
+                    target_label="server",
+                    section_group=grouped_sections.get(("clash_probe", "server")),
+                    policy=self._command_policies[CommandKind.CLASH_PROBE],
+                    parse_output=parse_clash_status,
+                    cache_used=server.server_id in self._clash_cache,
+                    fallback_duration_ms=batch_duration_ms,
                 )
+                if clash_execution.failure_class == "ok":
+                    clash = clash_execution.parsed
+                    clash["last_updated_at"] = polled_at_iso
+                    self._clash_cache[server.server_id] = clash
+                    self._clash_last_updated_at[server.server_id] = polled_at_iso
+                    self._clash_last_poll_ok[server.server_id] = True
+                else:
+                    self._clash_last_poll_ok[server.server_id] = False
             elif secret_execution.failure_class == "parse_error" and secret_execution.message == "secret-unavailable":
                 clash = dict(self._clash_cache.get(server.server_id, DEFAULT_CLASH))
                 clash["api_reachable"] = False
@@ -454,39 +784,6 @@ class DashboardRuntime:
                 self._clash_cache[server.server_id] = clash
                 self._clash_last_updated_at[server.server_id] = polled_at_iso
                 self._clash_last_poll_ok[server.server_id] = False
-            else:
-                # Transient secret command failures should not overwrite last good clash snapshot.
-                self._clash_last_poll_ok[server.server_id] = False
-
-        status_results: dict[str, object] = {}
-        if status_tasks:
-            gathered = await asyncio.gather(*status_tasks.values(), return_exceptions=True)
-            for key, result in zip(status_tasks.keys(), gathered):
-                status_results[key] = result
-
-        if "git" in status_results:
-            git_result = status_results["git"]
-            if isinstance(git_result, Exception):
-                self._git_last_poll_ok[server.server_id] = False
-            else:
-                polled_repos, successful_polls, repo_poll_ok = git_result
-                total_repos = len(server.working_dirs)
-                self._git_last_poll_ok[server.server_id] = successful_polls == total_repos
-                self._repo_last_poll_ok[server.server_id] = repo_poll_ok
-                if successful_polls > 0 or len(previous_repos) == 0:
-                    self._repo_cache[server.server_id] = polled_repos
-                    self._git_last_updated_at[server.server_id] = polled_at_iso
-
-        if "clash" in status_results:
-            clash_execution = status_results["clash"]
-            if isinstance(clash_execution, Exception):
-                self._clash_last_poll_ok[server.server_id] = False
-            elif clash_execution.failure_class == "ok":
-                clash = clash_execution.parsed
-                clash["last_updated_at"] = polled_at_iso
-                self._clash_cache[server.server_id] = clash
-                self._clash_last_updated_at[server.server_id] = polled_at_iso
-                self._clash_last_poll_ok[server.server_id] = True
             else:
                 self._clash_last_poll_ok[server.server_id] = False
 
@@ -635,6 +932,14 @@ class DashboardRuntime:
             return await self.executor.run(alias, remote_command, timeout_seconds=timeout_seconds)
         except TypeError:
             return await self.executor.run(alias, remote_command)
+
+    async def _run_batch_executor(self, alias: str, remote_command: str, *, timeout_seconds: float):
+        if self.batch_transport is not None and hasattr(self.batch_transport, "run"):
+            try:
+                return await self.batch_transport.run(alias, remote_command, timeout_seconds=timeout_seconds)
+            except Exception:
+                return await self._run_executor(alias, remote_command, timeout_seconds=timeout_seconds)
+        return await self._run_executor(alias, remote_command, timeout_seconds=timeout_seconds)
 
     async def _execute_with_policy(
         self,
@@ -803,6 +1108,155 @@ class DashboardRuntime:
             )
 
         raise RuntimeError("policy execution exited without result")
+
+    def _record_batch_failure(
+        self,
+        *,
+        server_id: str,
+        command_kind: CommandKind,
+        target_label: str,
+        result,
+        policy: CommandPolicy,
+        cache_used: bool,
+    ) -> _PolicyExecutionOutcome:
+        failure_class = classify_failure(error=getattr(result, "error", None), stderr=getattr(result, "stderr", ""))
+        message = getattr(result, "error", None) or getattr(result, "stderr", "") or "batch failed"
+        tracker = self._failure_tracker_for(
+            server_id=server_id,
+            command_kind=command_kind,
+            target_label=target_label,
+            policy=policy,
+        )
+        cooldown_applied = tracker.record_failure(now=time.monotonic())
+        had_host_unreachable = _is_ssh_unreachable(result)
+        host_unreachable_message = message if had_host_unreachable else ""
+        duration_ms = int(getattr(result, "duration_ms", 0))
+        self._append_command_health(
+            CommandHealthRecord(
+                recorded_at=datetime.now(UTC).isoformat(),
+                server_id=server_id,
+                command_kind=command_kind,
+                target_label=target_label,
+                ok=False,
+                failure_class=failure_class,
+                attempt_count=1,
+                duration_ms=duration_ms,
+                attempt_durations_ms=[duration_ms],
+                exit_code=int(getattr(result, "exit_code", -1)),
+                cooldown_applied=cooldown_applied,
+                cache_used=cache_used,
+                message=message,
+            )
+        )
+        return _PolicyExecutionOutcome(
+            result=result,
+            parsed=None,
+            failure_class=failure_class,
+            attempt_count=1,
+            message=message,
+            had_host_unreachable=had_host_unreachable,
+            host_unreachable_message=host_unreachable_message,
+        )
+
+    def _record_batch_section_outcome(
+        self,
+        *,
+        server_id: str,
+        command_kind: CommandKind,
+        target_label: str,
+        section_group: dict[str, object] | None,
+        policy: CommandPolicy,
+        parse_output,
+        cache_used: bool,
+        fallback_duration_ms: int,
+    ) -> _PolicyExecutionOutcome:
+        if section_group is None:
+            missing_result = SimpleNamespace(
+                stdout="",
+                stderr="missing batch section",
+                exit_code=-1,
+                duration_ms=fallback_duration_ms,
+                error="parse_error",
+            )
+            return self._record_batch_failure(
+                server_id=server_id,
+                command_kind=command_kind,
+                target_label=target_label,
+                result=missing_result,
+                policy=policy,
+                cache_used=cache_used,
+            )
+
+        stdout_section = section_group.get("stdout")
+        stderr_section = section_group.get("stderr")
+        result = SimpleNamespace(
+            stdout=stdout_section.payload if stdout_section is not None else "",
+            stderr=stderr_section.payload if stderr_section is not None else "",
+            exit_code=stdout_section.exit_code if stdout_section is not None else -1,
+            duration_ms=stdout_section.duration_ms if stdout_section is not None else fallback_duration_ms,
+            error=None,
+        )
+
+        tracker = self._failure_tracker_for(
+            server_id=server_id,
+            command_kind=command_kind,
+            target_label=target_label,
+            policy=policy,
+        )
+        if result.exit_code == 0:
+            try:
+                parsed = parse_output(result.stdout)
+            except Exception as exc:
+                parse_result = SimpleNamespace(
+                    stdout=result.stdout,
+                    stderr=str(exc),
+                    exit_code=result.exit_code,
+                    duration_ms=result.duration_ms,
+                    error="parse_error",
+                )
+                return self._record_batch_failure(
+                    server_id=server_id,
+                    command_kind=command_kind,
+                    target_label=target_label,
+                    result=parse_result,
+                    policy=policy,
+                    cache_used=cache_used,
+                )
+
+            tracker.record_success()
+            self._append_command_health(
+                CommandHealthRecord(
+                    recorded_at=datetime.now(UTC).isoformat(),
+                    server_id=server_id,
+                    command_kind=command_kind,
+                    target_label=target_label,
+                    ok=True,
+                    failure_class="ok",
+                    attempt_count=1,
+                    duration_ms=result.duration_ms,
+                    attempt_durations_ms=[result.duration_ms],
+                    exit_code=result.exit_code,
+                    cooldown_applied=False,
+                    cache_used=cache_used,
+                    message="ok",
+                )
+            )
+            return _PolicyExecutionOutcome(
+                result=result,
+                parsed=parsed,
+                failure_class="ok",
+                attempt_count=1,
+                message="ok",
+            )
+
+        return self._record_batch_failure(
+            server_id=server_id,
+            command_kind=command_kind,
+            target_label=target_label,
+            result=result,
+            policy=policy,
+            cache_used=cache_used,
+        )
 
     def _append_command_health(self, record: CommandHealthRecord) -> None:
         key = (record.server_id, record.command_kind.value, record.target_label)
@@ -1174,6 +1628,13 @@ def _shell_quote(value: str) -> str:
     return "'" + value.replace("'", "'\"'\"'") + "'"
 
 
+def _group_batch_sections(sections) -> dict[tuple[str, str], dict[str, object]]:
+    grouped: dict[tuple[str, str], dict[str, object]] = {}
+    for section in sections:
+        grouped.setdefault((section.kind, section.target), {})[section.stream] = section
+    return grouped
+
+
 def _empty_repo_status(path: str) -> dict[str, str | int | bool | None]:
     return {
         "path": path,
@@ -1338,6 +1799,27 @@ def _parse_required_clash_secret(output: str) -> str:
     raise ValueError("secret-unavailable")
 
 
+def _batched_clash_secret_command() -> str:
+    secret_command = _clash_secret_command()
+    return (
+        "__sm_secret_out=$(mktemp); "
+        "__sm_secret_err=$(mktemp); "
+        f"sh -lc {_shell_quote(secret_command)} >\"$__sm_secret_out\" 2>\"$__sm_secret_err\"; "
+        "__sm_secret_exit=$?; "
+        "cat \"$__sm_secret_out\"; "
+        "cat \"$__sm_secret_err\" >&2; "
+        "if [ \"$__sm_secret_exit\" -eq 0 ]; then "
+        "__sm_clash_secret=$(sed -nE "
+        "\"s/.*当前密钥[[:space:]]*[:：][[:space:]]*([^[:space:]]+).*/\\1/p; "
+        "s/.*[Cc]urrent[[:space:]]+[Ss]ecret[[:space:]]*[:：][[:space:]]*([^[:space:]]+).*/\\1/p; "
+        "s/.*[Ss]ecret[[:space:]]*[:：][[:space:]]*([^[:space:]]+).*/\\1/p\" "
+        "\"$__sm_secret_out\" | head -n1 | tr -d '\\r' | tr -d '\"' | tr -d \"'\" | xargs); "
+        "else __sm_clash_secret=''; fi; "
+        "rm -f \"$__sm_secret_out\" \"$__sm_secret_err\"; "
+        "[ \"$__sm_secret_exit\" -eq 0 ]"
+    )
+
+
 def _clash_secret_command() -> str:
     return (
         "if command -v clashsecret >/dev/null 2>&1; then "
@@ -1356,6 +1838,65 @@ def _clash_secret_command() -> str:
         "done; "
         "echo 'secret-unavailable' >&2; "
         "exit 1; "
+        "fi"
+    )
+
+
+def _batched_clash_probe_command(
+    *,
+    api_probe_url: str = "http://127.0.0.1:9090/version",
+    ui_probe_url: str = "http://127.0.0.1:9090/ui",
+) -> str:
+    api_url = _shell_quote(api_probe_url)
+    ui_url = _shell_quote(ui_probe_url)
+    return (
+        "if [ -z \"$__sm_clash_secret\" ]; then "
+        "echo 'secret-unavailable' >&2; "
+        "exit 1; "
+        "fi; "
+        "AUTH_HEADER=\"Authorization: Bearer $__sm_clash_secret\"; "
+        f"API_URL={api_url}; "
+        f"UI_URL={ui_url}; "
+        "if pgrep -f clash >/dev/null; then echo running=true; else echo running=false; fi; "
+        "if command -v curl >/dev/null 2>&1; then "
+        "API_CODE=$(curl -sS -o /dev/null -w '%{http_code}' --connect-timeout 1 --max-time 2 -H \"$AUTH_HEADER\" \"$API_URL\" || echo 000); "
+        "UI_CODE=$(curl -sS -o /dev/null -w '%{http_code}' --connect-timeout 1 --max-time 2 -H \"$AUTH_HEADER\" \"$UI_URL\" || echo 000); "
+        "if [ \"$API_CODE\" -ge 200 ] && [ \"$API_CODE\" -lt 400 ]; then echo api_reachable=true; else echo api_reachable=false; fi; "
+        "if [ \"$UI_CODE\" -ge 200 ] && [ \"$UI_CODE\" -lt 400 ]; then echo ui_reachable=true; else echo ui_reachable=false; fi; "
+        "if [ \"$API_CODE\" -ge 200 ] && [ \"$API_CODE\" -lt 400 ] && [ \"$UI_CODE\" -ge 200 ] && [ \"$UI_CODE\" -lt 400 ]; then echo message=ok; else echo message=probe-error; fi; "
+        "CTRL_PORT=unknown; "
+        "PROXY_URL=; "
+        "for CANDIDATE in "
+        "$HOME/clashctl/resources/runtime.yaml "
+        "$HOME/clash-for-linux-install/resources/runtime.yaml "
+        "; do "
+        "if [ -r \"$CANDIDATE\" ]; then "
+        "CTRL_LINE=$(grep -m1 '^external-controller:' \"$CANDIDATE\" | cut -d: -f2- | tr -d '\"' | tr -d \"'\" | tr -d '\\r' | xargs); "
+        "if [ -n \"$CTRL_LINE\" ]; then "
+        "CTRL_PORT=$(printf '%s' \"$CTRL_LINE\" | awk -F: '{print $NF}' | tr -d '\\r' | xargs); "
+        "fi; "
+        "PROXY_PORT=$(grep -m1 '^mixed-port:' \"$CANDIDATE\" | cut -d: -f2- | tr -d '\\r' | xargs); "
+        "if [ -z \"$PROXY_PORT\" ]; then "
+        "PROXY_PORT=$(grep -m1 '^port:' \"$CANDIDATE\" | cut -d: -f2- | tr -d '\\r' | xargs); "
+        "fi; "
+        "if [ -n \"$PROXY_PORT\" ]; then PROXY_URL=\"http://127.0.0.1:$PROXY_PORT\"; fi; "
+        "if [ -n \"$CTRL_PORT\" ] && [ -n \"$PROXY_URL\" ]; then break; fi; "
+        "fi; "
+        "done; "
+        "if [ -n \"$PROXY_URL\" ] && command -v curl >/dev/null 2>&1; then "
+        "IP_LOCATION=$(curl -sS --proxy \"$PROXY_URL\" --connect-timeout 2 --max-time 4 https://speed.cloudflare.com/meta 2>/dev/null | tr -d '\\r' | awk -F'\"city\"|\"region\"|\"country\"|\"ip\"' 'NF>1 {print $0}' | sed -n "
+        "\"s/.*\\\"city\\\":\\\"\\([^\\\"]*\\)\\\".*\\\"region\\\":\\\"\\([^\\\"]*\\)\\\".*\\\"country\\\":\\\"\\([^\\\"]*\\)\\\".*\\\"ip\\\":\\\"\\([^\\\"]*\\)\\\".*/\\1, \\2, \\3 (\\4)/p\"); "
+        "if [ -n \"$IP_LOCATION\" ]; then echo \"ip_location=$IP_LOCATION\"; else echo ip_location=unknown; fi; "
+        "else "
+        "echo ip_location=unknown; "
+        "fi; "
+        "echo controller_port=$CTRL_PORT; "
+        "else "
+        "echo api_reachable=false; "
+        "echo ui_reachable=false; "
+        "echo message=curl-missing; "
+        "echo ip_location=unknown; "
+        "echo controller_port=unknown; "
         "fi"
     )
 
