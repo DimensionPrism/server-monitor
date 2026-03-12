@@ -173,8 +173,8 @@ def test_app_js_nested_sections_have_expected_default_open_state():
     assert 'renderPanelGroup("GPU", renderGpuPanel(snapshot), {' in response.text
     assert 'renderPanelGroup("Git", renderGitPanel(update), {' in response.text
     assert 'renderPanelGroup("Clash", renderClashPanel(update.server_id, update.clash || {}), {' in response.text
-    assert "summaryBadgeHtml: renderFreshnessBadge(freshness.system)" in response.text
-    assert "summaryBadgeHtml: renderFreshnessBadge(freshness.gpu)" in response.text
+    assert 'liveSuffix: metricsStreamLiveSuffix(update, "system", freshness.system)' in response.text
+    assert 'liveSuffix: metricsStreamLiveSuffix(update, "gpu", freshness.gpu)' in response.text
     assert "summaryBadgeHtml: renderFreshnessBadge(freshness.git)" in response.text
     assert "summaryBadgeHtml: renderFreshnessBadge(freshness.clash)" in response.text
 

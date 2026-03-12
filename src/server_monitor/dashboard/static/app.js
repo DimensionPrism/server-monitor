@@ -68,10 +68,11 @@ function renderLastUpdateLine(timestampText) {
   return `<div class="muted panel-updated">Last update: ${escapeHtml(formatLastUpdate(timestampText))}</div>`;
 }
 
-function renderFreshnessBadge(freshness) {
+function renderFreshnessBadge(freshness, options = {}) {
   const state = freshness && freshness.state === "live" ? "live" : "cached";
   const reason = freshness && freshness.reason ? freshness.reason : "no_data";
-  const label = state === "live" ? "LIVE" : "CACHED";
+  const liveSuffix = state === "live" && typeof options.liveSuffix === "string" && options.liveSuffix ? ` ${options.liveSuffix}` : "";
+  const label = state === "live" ? `LIVE${liveSuffix}` : "CACHED";
   return `<span class="freshness-badge freshness-${state}" title="${escapeHtml(reason)}">${label}</span>`;
 }
 
@@ -392,7 +393,30 @@ function renderSummaryMetric(label, value, meta, level = "ok") {
   `;
 }
 
-function commandHealthOrder(enabledPanels) {
+function metricsStreamLiveSuffix(update, panelName, freshness) {
+  if ((panelName !== "system" && panelName !== "gpu") || !freshness || freshness.state !== "live") {
+    return "";
+  }
+  const metricsStream = update && update.metrics_stream ? update.metrics_stream : null;
+  if (!metricsStream || metricsStream.state !== "live") {
+    return "";
+  }
+  const intervalMs = Number(metricsStream.sample_interval_ms);
+  if (!Number.isFinite(intervalMs) || intervalMs <= 0) {
+    return "";
+  }
+  return `${Math.round(intervalMs)}ms`;
+}
+
+function isStreamBackedMetricsPanel(update, panelName) {
+  if (panelName !== "system" && panelName !== "gpu") {
+    return false;
+  }
+  const metricsStream = update && update.metrics_stream ? update.metrics_stream : null;
+  return Boolean(metricsStream && typeof metricsStream.state === "string" && metricsStream.state);
+}
+
+function commandHealthOrder(enabledPanels, update) {
   return COMMAND_HEALTH_PANEL_ORDER.filter((panel) => enabledPanels.has(panel));
 }
 
@@ -420,7 +444,7 @@ function renderCommandHealthChip(panelName, summary) {
 }
 
 function renderCommandHealthStrip(update, panels) {
-  const orderedPanels = commandHealthOrder(panels);
+  const orderedPanels = commandHealthOrder(panels, update).filter((panelName) => !isStreamBackedMetricsPanel(update, panelName));
   if (orderedPanels.length === 0) {
     return "";
   }
@@ -756,7 +780,9 @@ function renderMonitor() {
         groupClass: "system",
         open: false,
         serverId: update.server_id,
-        summaryBadgeHtml: renderFreshnessBadge(freshness.system),
+        summaryBadgeHtml: renderFreshnessBadge(freshness.system, {
+          liveSuffix: metricsStreamLiveSuffix(update, "system", freshness.system),
+        }),
       });
     }
 
@@ -765,7 +791,9 @@ function renderMonitor() {
         groupClass: "gpu",
         open: false,
         serverId: update.server_id,
-        summaryBadgeHtml: renderFreshnessBadge(freshness.gpu),
+        summaryBadgeHtml: renderFreshnessBadge(freshness.gpu, {
+          liveSuffix: metricsStreamLiveSuffix(update, "gpu", freshness.gpu),
+        }),
       });
     }
 

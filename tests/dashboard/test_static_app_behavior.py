@@ -318,6 +318,112 @@ def test_render_monitor_command_health_strip_preserves_panel_order_and_hides_ok_
     )
 
 
+def test_render_monitor_shows_metrics_stream_interval_in_live_badges():
+    _run_app_js_test(
+        """
+        const grid = document.getElementById("monitor-grid");
+        globalThis.__querySelectorAll = () => [];
+
+        __testExports.state.updates = new Map([
+          [
+            "server-a",
+            {
+              server_id: "server-a",
+              enabled_panels: ["system", "gpu"],
+              freshness: {
+                system: { state: "live", reason: "fresh" },
+                gpu: { state: "live", reason: "fresh" },
+              },
+              metrics_stream: {
+                state: "live",
+                sample_interval_ms: 250,
+              },
+              command_health: {
+                system: { state: "healthy", label: "live", detail: "Metrics stream active" },
+                gpu: { state: "healthy", label: "live", detail: "Metrics stream active" },
+              },
+              snapshot: {
+                cpu_percent: 10,
+                memory_percent: 20,
+                disk_percent: 30,
+                gpus: [],
+                metadata: {},
+              },
+              repos: [],
+              clash: {},
+            },
+          ],
+        ]);
+
+        __testExports.renderMonitor();
+
+        if (!grid.innerHTML.includes("System <span class=\\"freshness-badge freshness-live\\"")) {
+          throw new Error("system badge missing");
+        }
+        if (!grid.innerHTML.includes("GPU <span class=\\"freshness-badge freshness-live\\"")) {
+          throw new Error("gpu badge missing");
+        }
+        if (!grid.innerHTML.includes(">LIVE 250ms<")) {
+          throw new Error("stream interval missing from live badge");
+        }
+        """
+    )
+
+
+def test_render_monitor_hides_stream_backed_metrics_health_chips():
+    _run_app_js_test(
+        """
+        const grid = document.getElementById("monitor-grid");
+        globalThis.__querySelectorAll = () => [];
+
+        __testExports.state.updates = new Map([
+          [
+            "server-a",
+            {
+              server_id: "server-a",
+              enabled_panels: ["system", "gpu", "git"],
+              metrics_stream: {
+                state: "live",
+                sample_interval_ms: 250,
+              },
+              command_health: {
+                system: { state: "healthy", label: "live", detail: "Metrics stream active" },
+                gpu: { state: "healthy", label: "live", detail: "Metrics stream active" },
+                git: { state: "healthy", label: "182ms", detail: "Git ok" },
+              },
+              freshness: {
+                system: { state: "live", reason: "fresh" },
+                gpu: { state: "live", reason: "fresh" },
+                git: { state: "live", reason: "fresh" },
+              },
+              snapshot: {
+                cpu_percent: 10,
+                memory_percent: 20,
+                disk_percent: 30,
+                gpus: [],
+                metadata: {},
+              },
+              repos: [],
+              clash: {},
+            },
+          ],
+        ]);
+
+        __testExports.renderMonitor();
+
+        if (grid.innerHTML.includes('data-command-health-panel="system"')) {
+          throw new Error("system chip should be hidden for metrics stream");
+        }
+        if (grid.innerHTML.includes('data-command-health-panel="gpu"')) {
+          throw new Error("gpu chip should be hidden for metrics stream");
+        }
+        if (!grid.innerHTML.includes('data-command-health-panel="git"')) {
+          throw new Error("git chip should remain visible");
+        }
+        """
+    )
+
+
 def test_add_server_card_defaults_open_only_when_no_servers():
     _run_app_js_test(
         """
