@@ -170,6 +170,32 @@ class _TimeoutAwareGitExecutor:
         return _Result("ok")
 
 
+class _GitOpBatchTransport:
+    def __init__(self):
+        self.calls = []
+
+    async def run(self, alias: str, remote_command: str, *, timeout_seconds: float):
+        self.calls.append((alias, remote_command, timeout_seconds))
+        if "fetch --prune --tags" in remote_command:
+            return _Result("fetched")
+        if "pull --ff-only" in remote_command:
+            return _Result("Already up to date.\n")
+        if "checkout" in remote_command:
+            return _Result("Already on 'main'\n")
+        if "status --porcelain --branch" in remote_command:
+            return _Result("## main...origin/main [behind 2]\n")
+        return _Result("", stderr="unknown command", exit_code=1, error="unknown command")
+
+
+class _FailingGitOpBatchTransport:
+    def __init__(self):
+        self.calls = []
+
+    async def run(self, alias: str, remote_command: str, *, timeout_seconds: float):
+        self.calls.append((alias, remote_command, timeout_seconds))
+        raise RuntimeError("persistent transport failed")
+
+
 class _SlowGitStatusExecutor:
     def __init__(self):
         self.calls = []
@@ -1262,6 +1288,91 @@ async def test_runtime_git_op_fetch_uses_extended_timeout():
     assert len(fetch_calls) == 1
     assert fetch_calls[0][2] is not None
     assert fetch_calls[0][2] >= 10.0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("operation", "branch", "expected_snippet"),
+    [
+        ("fetch", None, "fetch --prune --tags"),
+        ("pull", None, "pull --ff-only"),
+        ("checkout", "main", "checkout 'main'"),
+    ],
+)
+async def test_runtime_git_ops_prefer_batch_transport_when_available(operation: str, branch: str | None, expected_snippet: str):
+    from server_monitor.dashboard.runtime import DashboardRuntime
+    from server_monitor.dashboard.ws_hub import WebSocketHub
+
+    settings = DashboardSettings(
+        servers=[
+            ServerSettings(
+                server_id="server-batch",
+                ssh_alias="srv-batch",
+                working_dirs=["/work/repo-batch"],
+                enabled_panels=["git"],
+            )
+        ]
+    )
+    executor = _TimeoutAwareGitExecutor()
+    batch_transport = _GitOpBatchTransport()
+    runtime = DashboardRuntime(
+        hub=WebSocketHub(),
+        settings_store=_FakeSettingsStore(settings),
+        executor=executor,
+        batch_transport=batch_transport,
+    )
+
+    result = await runtime.run_git_operation(
+        server_id="server-batch",
+        repo_path="/work/repo-batch",
+        operation=operation,
+        branch=branch,
+    )
+
+    assert result["ok"] is True
+    assert any(expected_snippet in call[1] for call in batch_transport.calls)
+    assert any("status --porcelain --branch" in call[1] for call in batch_transport.calls)
+    assert executor.calls == []
+    assert result["repo"]["behind"] == 2
+
+
+@pytest.mark.asyncio
+async def test_runtime_git_op_does_not_replay_mutating_command_when_batch_transport_fails():
+    from server_monitor.dashboard.runtime import DashboardRuntime
+    from server_monitor.dashboard.ws_hub import WebSocketHub
+
+    settings = DashboardSettings(
+        servers=[
+            ServerSettings(
+                server_id="server-batch-fallback",
+                ssh_alias="srv-batch-fallback",
+                working_dirs=["/work/repo-batch-fallback"],
+                enabled_panels=["git"],
+            )
+        ]
+    )
+    executor = _GitOpExecutor()
+    batch_transport = _FailingGitOpBatchTransport()
+    runtime = DashboardRuntime(
+        hub=WebSocketHub(),
+        settings_store=_FakeSettingsStore(settings),
+        executor=executor,
+        batch_transport=batch_transport,
+    )
+
+    result = await runtime.run_git_operation(
+        server_id="server-batch-fallback",
+        repo_path="/work/repo-batch-fallback",
+        operation="fetch",
+    )
+
+    assert result["ok"] is False
+    assert len(batch_transport.calls) == 2
+    assert len(executor.calls) == 1
+    assert all("fetch --prune --tags" not in call[1] for call in executor.calls)
+    assert any("status --porcelain --branch" in call[1] for call in executor.calls)
+    assert result["stderr"] == "persistent transport failed"
+    assert result["repo"]["path"] == "/work/repo-batch-fallback"
 
 
 @pytest.mark.asyncio

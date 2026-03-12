@@ -81,6 +81,18 @@ def _malformed_response(process: _FakeProcess, request_id: str) -> None:
     process.stdout.feed_line(f"__SM_DONE__ {'0' * len(request_id)} 0\n")
 
 
+def _delayed_response(release_event: asyncio.Event, payload: str):
+    def _response(process: _FakeProcess, request_id: str) -> None:
+        async def _finish() -> None:
+            await release_event.wait()
+            process.stdout.feed_line(payload)
+            process.stdout.feed_line(f"__SM_DONE__ {request_id} 0\n")
+
+        asyncio.create_task(_finish())
+
+    return _response
+
+
 @pytest.mark.asyncio
 async def test_persistent_batch_transport_starts_lazily_and_reuses_session_for_same_alias():
     created_processes = []
@@ -159,3 +171,34 @@ async def test_persistent_batch_transport_raises_on_malformed_completion_marker(
 
     with pytest.raises(PersistentSessionProtocolError, match="unexpected completion marker"):
         await transport.run("srv-a", "echo alpha", timeout_seconds=1.0)
+
+
+@pytest.mark.asyncio
+async def test_persistent_batch_transport_serializes_same_alias_requests():
+    release_first = asyncio.Event()
+    process = _FakeProcess(
+        [
+            _delayed_response(release_first, "first\n"),
+            _success_response("second\n"),
+        ]
+    )
+
+    async def _factory(alias: str):
+        return process
+
+    transport = PersistentBatchTransport(process_factory=_factory)
+
+    first_task = asyncio.create_task(transport.run("srv-a", "echo first", timeout_seconds=1.0))
+    await asyncio.sleep(0)
+    second_task = asyncio.create_task(transport.run("srv-a", "echo second", timeout_seconds=1.0))
+    await asyncio.sleep(0)
+
+    assert len(process.calls) == 1
+
+    release_first.set()
+    first = await first_task
+    second = await second_task
+
+    assert first.stdout == "first\n"
+    assert second.stdout == "second\n"
+    assert len(process.calls) == 2

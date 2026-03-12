@@ -956,19 +956,19 @@ class DashboardRuntime:
         command = _git_operation_command(repo_path=repo_path, operation=operation, branch=branch)
 
         if operation == "refresh":
-            operation_result = await self._run_executor(
+            operation_result = await self._run_batch_executor(
                 server.ssh_alias,
                 command,
                 timeout_seconds=GIT_OPERATION_TIMEOUT_SECONDS,
             )
             status_result = operation_result
         else:
-            operation_result = await self._run_executor(
+            operation_result = await self._run_git_operation_command(
                 server.ssh_alias,
                 command,
                 timeout_seconds=GIT_OPERATION_TIMEOUT_SECONDS,
             )
-            status_result = await self._run_executor(
+            status_result = await self._run_batch_executor(
                 server.ssh_alias,
                 _git_status_command(repo_path),
                 timeout_seconds=GIT_OPERATION_TIMEOUT_SECONDS,
@@ -1025,6 +1025,21 @@ class DashboardRuntime:
                 return await self.batch_transport.run(alias, remote_command, timeout_seconds=timeout_seconds)
             except Exception:
                 return await self._run_executor(alias, remote_command, timeout_seconds=timeout_seconds)
+        return await self._run_executor(alias, remote_command, timeout_seconds=timeout_seconds)
+
+    async def _run_git_operation_command(self, alias: str, remote_command: str, *, timeout_seconds: float):
+        if self.batch_transport is not None and hasattr(self.batch_transport, "run"):
+            try:
+                return await self.batch_transport.run(alias, remote_command, timeout_seconds=timeout_seconds)
+            except Exception as exc:
+                message = str(exc) or "persistent transport failed"
+                return SimpleNamespace(
+                    stdout="",
+                    stderr=message,
+                    exit_code=-1,
+                    duration_ms=0,
+                    error=message,
+                )
         return await self._run_executor(alias, remote_command, timeout_seconds=timeout_seconds)
 
     async def _execute_with_policy(

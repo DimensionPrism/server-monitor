@@ -28,18 +28,21 @@ class PersistentBatchTransport:
     ) -> None:
         self._process_factory = process_factory or _create_ssh_process
         self._sessions: dict[str, _PersistentBatchSession] = {}
+        self._alias_locks: dict[str, asyncio.Lock] = {}
 
     async def run(self, alias: str, remote_command: str, *, timeout_seconds: float) -> CommandResult:
-        session = self._sessions.get(alias)
-        if session is None:
-            session = _PersistentBatchSession(await self._process_factory(alias))
-            self._sessions[alias] = session
+        lock = self._alias_locks.setdefault(alias, asyncio.Lock())
+        async with lock:
+            session = self._sessions.get(alias)
+            if session is None:
+                session = _PersistentBatchSession(await self._process_factory(alias))
+                self._sessions[alias] = session
 
-        try:
-            return await session.run(remote_command, timeout_seconds=timeout_seconds)
-        except Exception:
-            await self._discard_session(alias)
-            raise
+            try:
+                return await session.run(remote_command, timeout_seconds=timeout_seconds)
+            except Exception:
+                await self._discard_session(alias)
+                raise
 
     async def close(self) -> None:
         aliases = list(self._sessions.keys())
