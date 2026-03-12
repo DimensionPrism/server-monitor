@@ -102,3 +102,29 @@ def test_normalize_passes_through_command_health():
     )
 
     assert normalized["command_health"]["system"]["label"] == "182ms"
+
+
+def test_normalize_passes_through_metrics_stream():
+    from server_monitor.dashboard.normalize import normalize_server_payload
+
+    now = datetime(2026, 3, 12, 12, 0, tzinfo=UTC)
+    payload = {
+        "timestamp": now.isoformat(),
+        "snapshot": {"cpu_percent": 10.0},
+        "repos": [],
+        "clash": {"running": True},
+        "metrics_stream": {
+            "state": "live",
+            "sample_interval_ms": 250,
+        },
+    }
+
+    normalized = normalize_server_payload(
+        server_id="server-a",
+        payload=payload,
+        now=now,
+        stale_after_seconds=10,
+    )
+
+    assert normalized["metrics_stream"]["state"] == "live"
+    assert normalized["metrics_stream"]["sample_interval_ms"] == 250

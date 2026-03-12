@@ -2488,6 +2488,8 @@ async def test_runtime_metrics_stream_sample_updates_snapshot_and_broadcasts_imm
     assert payload["snapshot"]["gpus"][0]["name"] == "NVIDIA A100"
     assert payload["freshness"]["system"]["state"] == "live"
     assert payload["freshness"]["gpu"]["state"] == "live"
+    assert payload["metrics_stream"]["state"] == "live"
+    assert payload["metrics_stream"]["sample_interval_ms"] == 250
 
 
 @pytest.mark.asyncio

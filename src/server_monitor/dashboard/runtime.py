@@ -414,6 +414,7 @@ class DashboardRuntime:
             "repos": repos_with_freshness,
             "clash": clash,
             "command_health": self._summarize_server_command_health(server=server),
+            "metrics_stream": self._serialize_metrics_stream_status(server.server_id),
             "enabled_panels": server.enabled_panels,
             "freshness": freshness,
         }
@@ -1598,15 +1599,7 @@ class DashboardRuntime:
 
         for server_id, stream_status in sorted(self._metrics_stream_status.items()):
             server_entry = servers.setdefault(server_id, {"server_id": server_id, "commands": []})
-            server_entry["metrics_stream"] = {
-                "state": stream_status.state,
-                "last_sample_received_at": stream_status.last_sample_received_at,
-                "last_sample_server_time": stream_status.last_sample_server_time,
-                "last_sequence": stream_status.last_sequence,
-                "sample_interval_ms": stream_status.sample_interval_ms,
-                "reconnect_count": stream_status.reconnect_count,
-                "state_changed_at": stream_status.state_changed_at,
-            }
+            server_entry["metrics_stream"] = self._serialize_metrics_stream_status(server_id)
 
         return {
             "generated_at": datetime.now(UTC).isoformat(),
@@ -1620,6 +1613,20 @@ class DashboardRuntime:
             status = _MetricsStreamStatus()
             self._metrics_stream_status[server_id] = status
         return status
+
+    def _serialize_metrics_stream_status(self, server_id: str) -> dict:
+        stream_status = self._metrics_stream_status.get(server_id)
+        if stream_status is None:
+            return {}
+        return {
+            "state": stream_status.state,
+            "last_sample_received_at": stream_status.last_sample_received_at,
+            "last_sample_server_time": stream_status.last_sample_server_time,
+            "last_sequence": stream_status.last_sequence,
+            "sample_interval_ms": stream_status.sample_interval_ms,
+            "reconnect_count": stream_status.reconnect_count,
+            "state_changed_at": stream_status.state_changed_at,
+        }
 
     def _replace_cached_repo(self, *, server_id: str, repo: dict) -> None:
         existing = self._repo_cache.get(server_id, [])

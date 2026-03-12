@@ -25,6 +25,7 @@ def normalize_server_payload(
         "repos": payload.get("repos", []),
         "clash": payload.get("clash", {}),
         "command_health": payload.get("command_health", {}),
+        "metrics_stream": payload.get("metrics_stream", {}),
         "freshness": payload.get("freshness", {}),
         "enabled_panels": payload.get("enabled_panels", ["system", "gpu", "git", "clash"]),
         "stale": stale,
