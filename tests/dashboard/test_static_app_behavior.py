@@ -424,6 +424,75 @@ def test_render_monitor_hides_stream_backed_metrics_health_chips():
     )
 
 
+def test_render_monitor_does_not_rewrite_grid_html_each_live_update():
+    _run_app_js_test(
+        """
+        const grid = document.getElementById("monitor-grid");
+        globalThis.__querySelectorAll = () => [];
+        window.HTMLElement = function FakeElement() {};
+
+        let writes = 0;
+        let htmlValue = "";
+        Object.defineProperty(grid, "innerHTML", {
+          configurable: true,
+          get() {
+            return htmlValue;
+          },
+          set(value) {
+            writes += 1;
+            htmlValue = String(value);
+          },
+        });
+
+        __testExports.state.updates = new Map([
+          [
+            "server-a",
+            {
+              server_id: "server-a",
+              enabled_panels: ["system"],
+              freshness: { system: { state: "live", reason: "fresh" } },
+              snapshot: {
+                cpu_percent: 10,
+                memory_percent: 20,
+                disk_percent: 30,
+                gpus: [],
+                metadata: {},
+              },
+              repos: [],
+              clash: {},
+            },
+          ],
+        ]);
+        __testExports.renderMonitor();
+
+        __testExports.state.updates = new Map([
+          [
+            "server-a",
+            {
+              server_id: "server-a",
+              enabled_panels: ["system"],
+              freshness: { system: { state: "live", reason: "fresh" } },
+              snapshot: {
+                cpu_percent: 12,
+                memory_percent: 22,
+                disk_percent: 32,
+                gpus: [],
+                metadata: {},
+              },
+              repos: [],
+              clash: {},
+            },
+          ],
+        ]);
+        __testExports.renderMonitor();
+
+        if (writes > 1) {
+          throw new Error(`monitor grid html was rewritten ${writes} times`);
+        }
+        """
+    )
+
+
 def test_add_server_card_defaults_open_only_when_no_servers():
     _run_app_js_test(
         """

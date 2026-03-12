@@ -11,6 +11,8 @@ const state = {
   clashSecrets: new Map(),
   clashTunnelPorts: new Map(),
   notificationLatches: new Map(),
+  monitorBoardEl: null,
+  monitorCards: new Map(),
   monitorToolbarStatus: "",
   notificationSettingsStatus: "",
 };
@@ -750,76 +752,185 @@ function bindMonitorToolbar() {
   setMonitorToolbarStatus(state.monitorToolbarStatus);
 }
 
-function renderMonitor() {
-  const grid = byId("monitor-grid");
+function canPatchMonitorCardsInPlace() {
+  return typeof window !== "undefined" && typeof window.HTMLElement === "function";
+}
+
+function clearMonitorCardCache() {
+  state.monitorBoardEl = null;
+  state.monitorCards.clear();
+}
+
+function resolveServerId(update, fallback = "") {
+  if (update && typeof update.server_id === "string" && update.server_id.trim()) {
+    return update.server_id;
+  }
+  if (typeof fallback === "string" && fallback.trim()) {
+    return fallback;
+  }
+  return "unknown-server";
+}
+
+function renderServerCardBody(update, serverId) {
+  const panels = new Set(update.enabled_panels || ["system", "gpu", "git", "clash"]);
+  const freshness = update.freshness || {};
+  const snapshot = update.snapshot || {};
+  const cardFreshness = summarizeFreshness(pickFreshnessForEnabledPanels(freshness, panels));
+
+  let html = `
+    <header class="server-card-head">
+      <h3>${escapeHtml(serverId)}</h3>
+      ${renderFreshnessBadge(cardFreshness)}
+    </header>
+    ${renderCommandHealthStrip(update, panels)}
+    ${renderServerSummary(snapshot, panels)}
+  `;
+
+  if (panels.has("system")) {
+    html += renderPanelGroup("System", renderSystemPanel(snapshot), {
+      groupClass: "system",
+      open: false,
+      serverId,
+      summaryBadgeHtml: renderFreshnessBadge(freshness.system, {
+        liveSuffix: metricsStreamLiveSuffix(update, "system", freshness.system),
+      }),
+    });
+  }
+
+  if (panels.has("gpu")) {
+    html += renderPanelGroup("GPU", renderGpuPanel(snapshot), {
+      groupClass: "gpu",
+      open: false,
+      serverId,
+      summaryBadgeHtml: renderFreshnessBadge(freshness.gpu, {
+        liveSuffix: metricsStreamLiveSuffix(update, "gpu", freshness.gpu),
+      }),
+    });
+  }
+
+  if (panels.has("git")) {
+    html += renderPanelGroup("Git", renderGitPanel(update), {
+      groupClass: "git",
+      open: false,
+      serverId,
+      summaryBadgeHtml: renderFreshnessBadge(freshness.git),
+    });
+  }
+
+  if (panels.has("clash")) {
+    html += renderPanelGroup("Clash", renderClashPanel(serverId, update.clash || {}), {
+      groupClass: "clash",
+      open: false,
+      serverId,
+      summaryBadgeHtml: renderFreshnessBadge(freshness.clash),
+    });
+  }
+
+  return html;
+}
+
+function renderMonitorWithStringReplacement(grid) {
   const cards = [];
 
   if (state.updates.size === 0) {
     grid.innerHTML = '<p class="muted">Waiting for server updates...</p>';
+    clearMonitorCardCache();
     return;
   }
 
-  for (const update of state.updates.values()) {
-    const panels = new Set(update.enabled_panels || ["system", "gpu", "git", "clash"]);
-    const freshness = update.freshness || {};
-    const snapshot = update.snapshot || {};
-    const cardFreshness = summarizeFreshness(pickFreshnessForEnabledPanels(freshness, panels));
-
-    let html = `
-      <article class="card server-card" data-server-id="${escapeHtml(update.server_id)}">
-        <header class="server-card-head">
-          <h3>${escapeHtml(update.server_id)}</h3>
-          ${renderFreshnessBadge(cardFreshness)}
-        </header>
-        ${renderCommandHealthStrip(update, panels)}
-        ${renderServerSummary(snapshot, panels)}
+  for (const [serverIdKey, update] of state.updates.entries()) {
+    const serverId = resolveServerId(update, String(serverIdKey));
+    const html = `
+      <article class="card server-card" data-server-id="${escapeHtml(serverId)}">
+        ${renderServerCardBody(update, serverId)}
+      </article>
     `;
-
-    if (panels.has("system")) {
-      html += renderPanelGroup("System", renderSystemPanel(snapshot), {
-        groupClass: "system",
-        open: false,
-        serverId: update.server_id,
-        summaryBadgeHtml: renderFreshnessBadge(freshness.system, {
-          liveSuffix: metricsStreamLiveSuffix(update, "system", freshness.system),
-        }),
-      });
-    }
-
-    if (panels.has("gpu")) {
-      html += renderPanelGroup("GPU", renderGpuPanel(snapshot), {
-        groupClass: "gpu",
-        open: false,
-        serverId: update.server_id,
-        summaryBadgeHtml: renderFreshnessBadge(freshness.gpu, {
-          liveSuffix: metricsStreamLiveSuffix(update, "gpu", freshness.gpu),
-        }),
-      });
-    }
-
-    if (panels.has("git")) {
-      html += renderPanelGroup("Git", renderGitPanel(update), {
-        groupClass: "git",
-        open: false,
-        serverId: update.server_id,
-        summaryBadgeHtml: renderFreshnessBadge(freshness.git),
-      });
-    }
-
-    if (panels.has("clash")) {
-      html += renderPanelGroup("Clash", renderClashPanel(update.server_id, update.clash || {}), {
-        groupClass: "clash",
-        open: false,
-        serverId: update.server_id,
-        summaryBadgeHtml: renderFreshnessBadge(freshness.clash),
-      });
-    }
-
-    html += "</article>";
     cards.push(html);
   }
 
   grid.innerHTML = `<div class="server-board">${cards.join("\n")}</div>`;
+}
+
+function ensureMonitorBoard(grid) {
+  let board = state.monitorBoardEl;
+  const attached = board && (typeof grid.contains !== "function" || grid.contains(board));
+  if (!attached) {
+    board = document.createElement("div");
+    board.className = "server-board";
+    if (typeof grid.replaceChildren === "function") {
+      grid.replaceChildren(board);
+    } else {
+      grid.textContent = "";
+      grid.appendChild(board);
+    }
+    state.monitorBoardEl = board;
+    state.monitorCards.clear();
+  }
+  return board;
+}
+
+function renderMonitorWithCardPatching(grid) {
+  if (state.updates.size === 0) {
+    grid.innerHTML = '<p class="muted">Waiting for server updates...</p>';
+    clearMonitorCardCache();
+    return;
+  }
+
+  const board = ensureMonitorBoard(grid);
+  const seenServerIds = new Set();
+  const orderedCards = [];
+
+  for (const [serverIdKey, update] of state.updates.entries()) {
+    const serverId = resolveServerId(update, String(serverIdKey));
+    seenServerIds.add(serverId);
+    let card = state.monitorCards.get(serverId);
+    if (!card) {
+      card = document.createElement("article");
+      card.className = "card server-card";
+      card.dataset.serverId = serverId;
+      state.monitorCards.set(serverId, card);
+      board.appendChild(card);
+    }
+    card.innerHTML = renderServerCardBody(update, serverId);
+    orderedCards.push(card);
+  }
+
+  for (const [serverId, card] of Array.from(state.monitorCards.entries())) {
+    if (seenServerIds.has(serverId)) {
+      continue;
+    }
+    if (card && typeof board.removeChild === "function") {
+      try {
+        board.removeChild(card);
+      } catch (_) {
+        // Ignore stale detached nodes.
+      }
+    }
+    state.monitorCards.delete(serverId);
+  }
+
+  if (typeof board.insertBefore === "function" && board.children) {
+    orderedCards.forEach((card, index) => {
+      const currentAtIndex = board.children[index];
+      if (currentAtIndex !== card) {
+        board.insertBefore(card, currentAtIndex || null);
+      }
+    });
+  }
+}
+
+function renderMonitor() {
+  const grid = byId("monitor-grid");
+  if (!grid) {
+    return;
+  }
+
+  if (canPatchMonitorCardsInPlace()) {
+    renderMonitorWithCardPatching(grid);
+  } else {
+    renderMonitorWithStringReplacement(grid);
+  }
+
   bindPanelGroupEvents();
   bindGitControlEvents();
   bindClashControlEvents();
