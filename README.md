@@ -2,6 +2,14 @@
 
 Local dashboard for monitoring remote GPU servers over SSH aliases in a single browser tab.
 
+Current transport split: `system` and `gpu` use continuous SSH metrics streaming, while `git` and `clash` stay on the slower batched status poller.
+
+## Docs Guide
+
+- This `README.md`: current operator behavior, setup, run, and verification
+- `docs/README.md`: short docs index
+- `docs/roadmap-v1-future-path.md`: shipped release history and forward roadmap
+
 ## What Works Now
 
 - Agentless monitoring (no remote repo clone/install needed)

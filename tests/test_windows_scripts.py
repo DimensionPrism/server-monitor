@@ -11,7 +11,11 @@ def _read_script(name: str) -> str:
 
 def test_start_dashboard_script_exists_and_runs_uvicorn():
     content = _read_script("start-dashboard.ps1")
-    assert "uv run uvicorn server_monitor.dashboard.main:build_dashboard_app --factory" in content
+    assert '.venv\\Scripts\\python.exe' in content
+    assert '"-m"' in content
+    assert '"uvicorn"' in content
+    assert '"server_monitor.dashboard.main:build_dashboard_app"' in content
+    assert '"--factory"' in content
     assert "Start-Process" in content
     assert "logs\\dashboard.log" in content
 

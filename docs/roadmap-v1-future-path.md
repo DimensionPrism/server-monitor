@@ -1,5 +1,7 @@
 # Server Monitor Future Path (Post-v1)
 
+Engineering archive note: dated files under `docs/superpowers/specs/` and `docs/superpowers/plans/` sometimes use shorthand names like `v13` and `v14`. Those map to shipped release milestones `v1.3` and `v1.4`; the roadmap uses the release labels.
+
 ## v1.1 Status
 
 `v1.1` is implemented in the current codebase.
@@ -31,6 +33,12 @@
 - Landed: lightweight transition-only failure notifications (desktop + optional webhook) from live command health updates.
 - Landed: a user-facing diagnostics export action that packages the existing diagnostics bundle for sharing.
 
+## v1.3 Status
+
+- Landed: lower-latency batched status polling for `git` and `clash` without reducing card detail or freshness.
+- Landed: persistent per-alias SSH shell reuse on the status path, with fallback to one-shot SSH when the persistent transport breaks.
+- Landed: per-section command accounting so card latencies stay separate even when status work shares a transport round trip.
+
 ## v1.4 Status
 
 - Landed: agentless continuous SSH streaming for `system` and `gpu` on every configured server.
@@ -57,6 +65,7 @@
 
 1. `v1.1`: Freshness UX + secret-aware Clash reachability + one-click tunnel open + Clash login assist.
 2. `v1.2`: Reliability and diagnostics (timeouts/retries/health/notifications).
-3. `v1.4`: Agentless continuous metrics streaming for `system` and `gpu`.
-4. `v1.5`: Historical data + policy controls.
-5. `v2.0`: Multi-user and plugin-oriented architecture.
+3. `v1.3`: Transport latency reduction for the status path (`git`/`clash` batching + persistent SSH reuse).
+4. `v1.4`: Agentless continuous metrics streaming for `system` and `gpu`.
+5. `v1.5`: Historical data + policy controls.
+6. `v2.0`: Multi-user and plugin-oriented architecture.
