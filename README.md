@@ -80,7 +80,7 @@ Edit `config/servers.toml` with your SSH aliases and repo paths.
 ## Run
 
 ```bash
-uv run uvicorn server_monitor.dashboard.main:build_dashboard_app --factory --host 127.0.0.1 --port 8080
+uv run server-monitor-dashboard
 ```
 
 Open:
