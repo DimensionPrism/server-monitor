@@ -395,7 +395,30 @@ function renderSummaryMetric(label, value, meta, level = "ok") {
   `;
 }
 
-function commandHealthOrder(enabledPanels) {
+function metricsStreamLiveSuffix(update, panelName, freshness) {
+  if ((panelName !== "system" && panelName !== "gpu") || !freshness || freshness.state !== "live") {
+    return "";
+  }
+  const metricsStream = update && update.metrics_stream ? update.metrics_stream : null;
+  if (!metricsStream || metricsStream.state !== "live") {
+    return "";
+  }
+  const intervalMs = Number(metricsStream.sample_interval_ms);
+  if (!Number.isFinite(intervalMs) || intervalMs <= 0) {
+    return "";
+  }
+  return `${Math.round(intervalMs)}ms`;
+}
+
+function isStreamBackedMetricsPanel(update, panelName) {
+  if (panelName !== "system" && panelName !== "gpu") {
+    return false;
+  }
+  const metricsStream = update && update.metrics_stream ? update.metrics_stream : null;
+  return Boolean(metricsStream && typeof metricsStream.state === "string" && metricsStream.state);
+}
+
+function commandHealthOrder(enabledPanels, update) {
   return COMMAND_HEALTH_PANEL_ORDER.filter((panel) => enabledPanels.has(panel));
 }
 
@@ -423,7 +446,7 @@ function renderCommandHealthChip(panelName, summary) {
 }
 
 function renderCommandHealthStrip(update, panels) {
-  const orderedPanels = commandHealthOrder(panels);
+  const orderedPanels = commandHealthOrder(panels, update).filter((panelName) => !isStreamBackedMetricsPanel(update, panelName));
   if (orderedPanels.length === 0) {
     return "";
   }
@@ -768,7 +791,9 @@ function renderServerCardBody(update, serverId) {
       groupClass: "system",
       open: false,
       serverId,
-      summaryBadgeHtml: renderFreshnessBadge(freshness.system),
+      summaryBadgeHtml: renderFreshnessBadge(freshness.system, {
+        liveSuffix: metricsStreamLiveSuffix(update, "system", freshness.system),
+      }),
     });
   }
 
@@ -777,7 +802,9 @@ function renderServerCardBody(update, serverId) {
       groupClass: "gpu",
       open: false,
       serverId,
-      summaryBadgeHtml: renderFreshnessBadge(freshness.gpu),
+      summaryBadgeHtml: renderFreshnessBadge(freshness.gpu, {
+        liveSuffix: metricsStreamLiveSuffix(update, "gpu", freshness.gpu),
+      }),
     });
   }
 
@@ -786,6 +813,7 @@ function renderServerCardBody(update, serverId) {
       groupClass: "git",
       open: false,
       serverId,
+      summaryBadgeHtml: renderFreshnessBadge(freshness.git),
     });
   }
 
@@ -794,6 +822,7 @@ function renderServerCardBody(update, serverId) {
       groupClass: "clash",
       open: false,
       serverId,
+      summaryBadgeHtml: renderFreshnessBadge(freshness.clash),
     });
   }
 
@@ -840,6 +869,36 @@ function ensureMonitorBoard(grid) {
   return board;
 }
 
+function isCardInteractionLocked(card) {
+  if (!card) {
+    return false;
+  }
+  try {
+    if (typeof card.matches === "function" && card.matches(":hover")) {
+      return true;
+    }
+  } catch (_) {
+    // Ignore selector capability issues in non-browser test environments.
+  }
+  const activeElement = typeof document !== "undefined" ? document.activeElement : null;
+  if (activeElement && typeof card.contains === "function" && card.contains(activeElement)) {
+    return true;
+  }
+  return false;
+}
+
+function patchCardBody(card, nextBodyHtml) {
+  if (isCardInteractionLocked(card)) {
+    card.__pendingBodyHtml = nextBodyHtml;
+    return;
+  }
+  const bodyHtml = nextBodyHtml;
+  if (card.innerHTML !== bodyHtml) {
+    card.innerHTML = bodyHtml;
+  }
+  card.__pendingBodyHtml = "";
+}
+
 function renderMonitorWithCardPatching(grid) {
   if (state.updates.size === 0) {
     grid.innerHTML = '<p class="muted">Waiting for server updates...</p>';
@@ -862,7 +921,7 @@ function renderMonitorWithCardPatching(grid) {
       state.monitorCards.set(serverId, card);
       board.appendChild(card);
     }
-    card.innerHTML = renderServerCardBody(update, serverId);
+    patchCardBody(card, renderServerCardBody(update, serverId));
     orderedCards.push(card);
   }
 

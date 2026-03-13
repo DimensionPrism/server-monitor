@@ -318,7 +318,7 @@ def test_render_monitor_command_health_strip_preserves_panel_order_and_hides_ok_
     )
 
 
-def test_render_monitor_keeps_metrics_live_badges_without_fake_interval_suffix():
+def test_render_monitor_shows_metrics_stream_interval_in_live_badges():
     _run_app_js_test(
         """
         const grid = document.getElementById("monitor-grid");
@@ -339,8 +339,8 @@ def test_render_monitor_keeps_metrics_live_badges_without_fake_interval_suffix()
                 sample_interval_ms: 250,
               },
               command_health: {
-                system: { state: "healthy", label: "36ms", detail: "Metrics stream transport latency" },
-                gpu: { state: "healthy", label: "41ms", detail: "Metrics stream transport latency" },
+                system: { state: "healthy", label: "live", detail: "Metrics stream active" },
+                gpu: { state: "healthy", label: "live", detail: "Metrics stream active" },
               },
               snapshot: {
                 cpu_percent: 10,
@@ -363,23 +363,14 @@ def test_render_monitor_keeps_metrics_live_badges_without_fake_interval_suffix()
         if (!grid.innerHTML.includes("GPU <span class=\\"freshness-badge freshness-live\\"")) {
           throw new Error("gpu badge missing");
         }
-        if (!grid.innerHTML.includes(">LIVE<")) {
-          throw new Error("expected live badge text");
-        }
-        if (grid.innerHTML.includes("LIVE 250ms")) {
-          throw new Error("stream cadence leaked into live badge text");
-        }
-        if (!grid.innerHTML.includes('data-command-health-panel="system"') || !grid.innerHTML.includes(">36ms<")) {
-          throw new Error("system latency chip missing");
-        }
-        if (!grid.innerHTML.includes('data-command-health-panel="gpu"') || !grid.innerHTML.includes(">41ms<")) {
-          throw new Error("gpu latency chip missing");
+        if (!grid.innerHTML.includes(">LIVE 250ms<")) {
+          throw new Error("stream interval missing from live badge");
         }
         """
     )
 
 
-def test_render_monitor_keeps_stream_backed_metrics_health_chips_visible():
+def test_render_monitor_hides_stream_backed_metrics_health_chips():
     _run_app_js_test(
         """
         const grid = document.getElementById("monitor-grid");
@@ -396,8 +387,8 @@ def test_render_monitor_keeps_stream_backed_metrics_health_chips_visible():
                 sample_interval_ms: 250,
               },
               command_health: {
-                system: { state: "healthy", label: "28ms", detail: "Metrics stream transport latency" },
-                gpu: { state: "healthy", label: "31ms", detail: "Metrics stream transport latency" },
+                system: { state: "healthy", label: "live", detail: "Metrics stream active" },
+                gpu: { state: "healthy", label: "live", detail: "Metrics stream active" },
                 git: { state: "healthy", label: "182ms", detail: "Git ok" },
               },
               freshness: {
@@ -420,57 +411,14 @@ def test_render_monitor_keeps_stream_backed_metrics_health_chips_visible():
 
         __testExports.renderMonitor();
 
-        if (!grid.innerHTML.includes('data-command-health-panel="system"')) {
-          throw new Error("system chip should remain visible");
+        if (grid.innerHTML.includes('data-command-health-panel="system"')) {
+          throw new Error("system chip should be hidden for metrics stream");
         }
-        if (!grid.innerHTML.includes('data-command-health-panel="gpu"')) {
-          throw new Error("gpu chip should remain visible");
+        if (grid.innerHTML.includes('data-command-health-panel="gpu"')) {
+          throw new Error("gpu chip should be hidden for metrics stream");
         }
         if (!grid.innerHTML.includes('data-command-health-panel="git"')) {
           throw new Error("git chip should remain visible");
-        }
-        """
-    )
-
-
-def test_render_monitor_avoids_duplicate_git_and_clash_summary_status_chips():
-    _run_app_js_test(
-        """
-        const grid = document.getElementById("monitor-grid");
-        globalThis.__querySelectorAll = () => [];
-
-        __testExports.state.updates = new Map([
-          [
-            "server-a",
-            {
-              server_id: "server-a",
-              enabled_panels: ["git", "clash"],
-              freshness: {
-                git: { state: "live", reason: "ok" },
-                clash: { state: "live", reason: "ok" },
-              },
-              command_health: {
-                git: { state: "healthy", label: "152ms", detail: "All repos healthy" },
-                clash: { state: "healthy", label: "44ms", detail: "Last probe succeeded" },
-              },
-              snapshot: {
-                cpu_percent: 0,
-                memory_percent: 0,
-                disk_percent: 0,
-                gpus: [],
-                metadata: {},
-              },
-              repos: [],
-              clash: {},
-            },
-          ],
-        ]);
-
-        __testExports.renderMonitor();
-
-        const badgeCount = (grid.innerHTML.match(/freshness-badge/g) || []).length;
-        if (badgeCount !== 1) {
-          throw new Error(`expected only card-level freshness badge, found ${badgeCount}`);
         }
         """
     )
@@ -540,6 +488,163 @@ def test_render_monitor_does_not_rewrite_grid_html_each_live_update():
 
         if (writes > 1) {
           throw new Error(`monitor grid html was rewritten ${writes} times`);
+        }
+        """
+    )
+
+
+def test_render_monitor_defers_card_body_repaint_while_hovered():
+    _run_app_js_test(
+        """
+        const grid = document.getElementById("monitor-grid");
+        globalThis.__querySelectorAll = () => [];
+        window.HTMLElement = function FakeElement() {};
+
+        __testExports.state.updates = new Map([
+          [
+            "server-a",
+            {
+              server_id: "server-a",
+              enabled_panels: ["system", "git"],
+              freshness: {
+                system: { state: "live", reason: "fresh" },
+                git: { state: "live", reason: "fresh" },
+              },
+              snapshot: {
+                cpu_percent: 10,
+                memory_percent: 20,
+                disk_percent: 30,
+                gpus: [],
+                metadata: {},
+              },
+              repos: [
+                {
+                  path: "/repo-a",
+                  branch: "baseline",
+                  dirty: false,
+                  ahead: 0,
+                  behind: 0,
+                  staged: 0,
+                  unstaged: 0,
+                  untracked: 0,
+                  last_updated_at: null,
+                  freshness: { state: "live", reason: "fresh" },
+                },
+              ],
+              clash: {},
+            },
+          ],
+        ]);
+        __testExports.renderMonitor();
+
+        const card = __testExports.state.monitorCards.get("server-a");
+        if (!card) {
+          throw new Error("expected monitor card to exist");
+        }
+
+        let writes = 0;
+        let htmlValue = card.innerHTML;
+        Object.defineProperty(card, "innerHTML", {
+          configurable: true,
+          get() {
+            return htmlValue;
+          },
+          set(value) {
+            writes += 1;
+            htmlValue = String(value);
+          },
+        });
+
+        card.matches = (selector) => selector === ":hover";
+        card.contains = () => false;
+
+        __testExports.state.updates = new Map([
+          [
+            "server-a",
+            {
+              server_id: "server-a",
+              enabled_panels: ["system", "git"],
+              freshness: {
+                system: { state: "live", reason: "fresh" },
+                git: { state: "live", reason: "fresh" },
+              },
+              snapshot: {
+                cpu_percent: 12,
+                memory_percent: 22,
+                disk_percent: 32,
+                gpus: [],
+                metadata: {},
+              },
+              repos: [
+                {
+                  path: "/repo-a",
+                  branch: "stale-hover",
+                  dirty: false,
+                  ahead: 1,
+                  behind: 0,
+                  staged: 0,
+                  unstaged: 0,
+                  untracked: 0,
+                  last_updated_at: null,
+                  freshness: { state: "live", reason: "fresh" },
+                },
+              ],
+              clash: {},
+            },
+          ],
+        ]);
+        __testExports.renderMonitor();
+
+        if (writes !== 0) {
+          throw new Error(`card body repainted while hovered: ${writes}`);
+        }
+
+        card.matches = () => false;
+        __testExports.state.updates = new Map([
+          [
+            "server-a",
+            {
+              server_id: "server-a",
+              enabled_panels: ["system", "git"],
+              freshness: {
+                system: { state: "live", reason: "fresh" },
+                git: { state: "live", reason: "fresh" },
+              },
+              snapshot: {
+                cpu_percent: 13,
+                memory_percent: 23,
+                disk_percent: 33,
+                gpus: [],
+                metadata: {},
+              },
+              repos: [
+                {
+                  path: "/repo-a",
+                  branch: "latest-unlock",
+                  dirty: false,
+                  ahead: 2,
+                  behind: 0,
+                  staged: 0,
+                  unstaged: 0,
+                  untracked: 0,
+                  last_updated_at: null,
+                  freshness: { state: "live", reason: "fresh" },
+                },
+              ],
+              clash: {},
+            },
+          ],
+        ]);
+        __testExports.renderMonitor();
+
+        if (writes !== 1) {
+          throw new Error(`card body should repaint once after hover ends, got ${writes}`);
+        }
+        if (!htmlValue.includes("latest-unlock")) {
+          throw new Error(`unlock should render latest payload, got: ${htmlValue}`);
+        }
+        if (htmlValue.includes("stale-hover")) {
+          throw new Error("unlock rendered stale deferred payload");
         }
         """
     )
