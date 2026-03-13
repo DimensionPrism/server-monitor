@@ -87,6 +87,13 @@ Open:
 
 - `http://127.0.0.1:8080`
 
+## Security Boundary
+
+- This dashboard does not implement authentication or authorization.
+- Keep it bound to loopback (`127.0.0.1`) and run it only on a trusted local machine.
+- Do not expose this service directly to a LAN or the public internet.
+- If remote access is required, place it behind a hardened boundary (for example: VPN plus an authenticated reverse proxy with TLS).
+
 ## Windows Background Scripts
 
 Use these from PowerShell in the repo root:
