@@ -1,24 +1,25 @@
 # Metrics Stream Badge Latency Design
 
+## Status
+
+Superseded by follow-up UX/runtime fixes on 2026-03-13. Keep this file as historical context; current behavior is documented below.
+
 ## Goal
 
-Remove the duplicated `live` signal on each dashboard card by moving streamed metrics timing onto the existing freshness badges and hiding the redundant metrics command-health chips.
+Keep streamed metrics cards easy to scan while preserving explicit health visibility for `SYS`/`GPU` in the command-health strip.
 
 ## Current Problem
 
-After agentless metrics streaming landed, `system` and `gpu` command-health summaries started reporting `label: "live"` when the stream was healthy. The dashboard now shows:
+After agentless metrics streaming landed, `system` and `gpu` command-health summaries initially reported a non-informative `label: "live"` when the stream was healthy. That provided poor operator signal because:
 
-- a `LIVE` freshness badge for current data
-- a `live` command-health chip for `SYS`
-- a `live` command-health chip for `GPU`
-
-This duplicates the same concept in multiple places and makes the card harder to scan.
+- the card already had `LIVE` freshness badges
+- `live` chip text did not quantify transport behavior
 
 ## Constraints
 
-- Keep `command_health.system` and `command_health.gpu` in the payload for degraded-state notifications and diagnostics.
-- Do not invent a fake SSH latency for streamed metrics. The stable numeric timing already available is `sample_interval_ms`, which represents stream cadence.
-- Preserve the existing `git` and `clash` command-health strip behavior.
+- Keep `command_health.system` and `command_health.gpu` in payloads for degraded-state notifications and diagnostics.
+- Do not invent one-shot SSH latency for streamed metrics.
+- Preserve the existing command-health strip behavior across enabled panels.
 
 ## Recommended Design
 
@@ -28,6 +29,7 @@ Pass the runtime's `metrics_stream` status through the normalized dashboard upda
 
 - `state`
 - `sample_interval_ms`
+- `transport_latency_ms`
 
 Other existing metrics-stream fields may continue to pass through unchanged for future UI use.
 
@@ -35,18 +37,20 @@ Other existing metrics-stream fields may continue to pass through unchanged for 
 
 System and GPU freshness badges should render:
 
-- `LIVE 250ms` when:
-  - the panel freshness state is `live`
-  - the server `metrics_stream.state` is `live`
-  - `metrics_stream.sample_interval_ms` is a finite number
-- `LIVE` when the panel is live but no interval is available
+- `LIVE` when panel freshness is live
 - `CACHED` for non-live freshness states
 
-This timing is stream cadence, not transport round-trip latency. It is still the most honest numeric signal available for streamed metrics in the current architecture.
+Do not append stream cadence text to freshness badges.
 
 ### Command Health Strip
 
-When a server is using the metrics stream, do not render `SYS` and `GPU` chips in the command-health strip. Continue rendering `GIT` and `CLASH` chips normally.
+Keep `SYS`, `GPU`, `GIT`, and `CLASH` chips visible whenever their panels are enabled.
+
+For stream-backed `SYS`/`GPU`:
+
+- healthy state should show transport latency labels (for example `36ms`) when available
+- degraded stream states should use explicit labels such as `reconnecting`, `connecting`, and `stopped`
+- details/tooltips should identify stream transport context
 
 The backend command-health payload remains unchanged so:
 
@@ -58,14 +62,14 @@ The backend command-health payload remains unchanged so:
 1. `DashboardRuntime` keeps tracking `_MetricsStreamStatus`, including `state` and `sample_interval_ms`.
 2. Runtime includes `metrics_stream` in the broadcast payload.
 3. `normalize_server_payload` preserves `metrics_stream`.
-4. The frontend reads `update.metrics_stream` while rendering System/GPU freshness badges.
-5. The command-health strip filters out stream-backed `system` and `gpu` chips.
+4. The frontend renders System/GPU freshness as plain `LIVE`/`CACHED`.
+5. The command-health strip renders all enabled chips, including stream-backed `system` and `gpu`.
 
 ## Error Handling
 
-- If `metrics_stream` is missing, malformed, or not live, badges fall back to the current `LIVE`/`CACHED` text.
+- If `metrics_stream` is missing, malformed, or not live, badges continue to use freshness-only `LIVE`/`CACHED` text.
 - If the stream is degraded (`reconnecting`, `connecting`, `stopped`), the badges continue to reflect freshness while notifications still key off `command_health`.
-- If `sample_interval_ms` is absent, non-numeric, or zero-like invalid input, omit the appended timing text.
+- If transport latency cannot be computed safely, command-health labels fall back to `--` while preserving stream-state semantics.
 
 ## Testing
 
@@ -73,7 +77,7 @@ Add or update tests to cover:
 
 - runtime payload includes `metrics_stream`
 - normalized payload preserves `metrics_stream`
-- streamed metrics panels render `LIVE <interval>ms`
-- command-health strip hides `SYS` and `GPU` for stream-backed cards
-- `GIT` and `CLASH` chips still render
+- streamed metrics panel badges render plain `LIVE`/`CACHED` without appended cadence text
+- command-health strip keeps `SYS` and `GPU` chips visible for stream-backed cards
+- `GIT` and `CLASH` chips still render in order
 - degraded command-health notifications still use metrics panel summaries

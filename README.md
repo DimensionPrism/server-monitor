@@ -16,7 +16,7 @@ Current transport split: `system` and `gpu` use continuous SSH metrics streaming
 - Summary-first server cards with a metrics-only collapsed state for faster daily scanning
 - Agentless continuous SSH streaming for `system` and `gpu`
 - Snapshot polling over SSH for `git` and `clash`
-- Freshness badges (`LIVE`/`CACHED`) for System/GPU/Git/Clash panels and repo rows
+- Freshness badges (`LIVE`/`CACHED`) for server cards, System/GPU panels, and repo rows
 - Multi-GPU summary signal on each card (`active/total` devices plus `peak` utilization)
 - Secret-aware Clash API/UI reachability checks with configurable probe URLs
 - One-click Clash UI tunnel-open action from the Clash panel
@@ -119,16 +119,17 @@ Notes:
 - Status polling now runs on a non-blocking background path so stalled SSH status commands no longer block dashboard cycles or overwrite the last good Clash snapshot on transient secret command failures.
 - Status batching keeps `git` and `clash` detail/freshness the same while lowering SSH setup overhead on the slower status path.
 - Status batching prefers a persistent SSH shell per alias and automatically retries through the existing one-shot SSH path if the persistent transport fails.
-- If a metrics stream drops, the last good `system`/`gpu` sample stays visible while freshness ages from `LIVE` to `CACHED`, and the command-health chips switch to stream-state labels like `reconnecting`.
+- If a metrics stream drops, the last good `system`/`gpu` sample stays visible while freshness ages from `LIVE` to `CACHED`; `SYS`/`GPU` command-health chips then surface stream states like `reconnecting`, `connecting`, or `stopped`.
+- When the metrics stream is healthy, `SYS`/`GPU` command-health chips report transport latency labels derived from stream sample timing.
 - Clash reachability treats HTTP redirects (`3xx`) as reachable to support `/ui` -> `/ui/` style responses.
 - Recent command health is kept in memory so repeated transient failures can retry in a bounded way and briefly cool down before the next attempt.
 - `GET /api/diagnostics` returns a redaction-safe JSON bundle of current settings and recent command outcomes for debugging/sharing.
-- `GET /api/diagnostics` now also exposes per-server `metrics_stream` state, last sample metadata, and reconnect counters.
+- `GET /api/diagnostics` now also exposes per-server `metrics_stream` state, last sample metadata, transport latency estimates, and reconnect counters.
 - The monitor toolbar can export the diagnostics bundle directly as a timestamped JSON download.
 - A quick latency check after launch:
   - start the dashboard
   - open `GET /api/diagnostics`
-  - compare the `metrics_stream` section for `system`/`gpu` liveliness and the latest `duration_ms` values for `git_status`, `clash_secret`, and `clash_probe`
+  - compare `metrics_stream.transport_latency_ms` for `system`/`gpu` against the latest `duration_ms` values for `git_status`, `clash_secret`, and `clash_probe`
 - Failure notifications are evaluated in the open browser session from live `command_health` updates and only fire on new degraded transitions.
 
 ## Testing
