@@ -33,8 +33,11 @@ PYTHON_PATH="$REPO_ROOT/.venv/bin/python"
 mkdir -p "$LOGS_DIR"
 
 if ss -ltn "sport = :$PORT" 2>/dev/null | tail -n +2 | grep -q .; then
-  echo "Port $PORT is already in use."
-  echo "If this is the dashboard, open: http://127.0.0.1:$PORT"
+  echo "Port $PORT is already in use." >&2
+  echo "If this is the dashboard, open: http://127.0.0.1:$PORT" >&2
+  if [[ "$FOREGROUND" -eq 1 ]]; then
+    exit 1
+  fi
   exit 0
 fi
 
@@ -56,6 +59,7 @@ UVICORN_ARGS=(
 
 if [[ "$FOREGROUND" -eq 1 ]]; then
   cd "$REPO_ROOT"
+  echo "$$" >"$PID_PATH"
   echo "Starting dashboard in foreground on http://127.0.0.1:$PORT"
   exec "$PYTHON_PATH" "${UVICORN_ARGS[@]}"
 fi
