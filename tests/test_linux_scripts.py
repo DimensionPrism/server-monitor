@@ -1,8 +1,15 @@
+import os
 from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS_DIR = REPO_ROOT / "scripts"
+
+LINUX_SCRIPTS = [
+    "start-dashboard.sh",
+    "stop-dashboard.sh",
+    "install-dashboard-user-service.sh",
+]
 
 
 def _read_script(name: str) -> str:
@@ -33,3 +40,9 @@ def test_install_linux_service_script_exists_and_registers_service():
     assert "systemctl --user enable" in content
     assert "systemctl --user start" in content
     assert "start-dashboard.sh" in content
+
+
+def test_linux_scripts_are_executable():
+    for name in LINUX_SCRIPTS:
+        path = SCRIPTS_DIR / name
+        assert os.access(path, os.X_OK), f"{name} is not executable"
