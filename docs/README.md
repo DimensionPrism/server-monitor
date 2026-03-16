@@ -3,6 +3,8 @@
 ## Start Here
 
 - [`../README.md`](../README.md): current operator behavior, setup, run, and verification
+- [`../README.md#windows-background-scripts`](../README.md#windows-background-scripts): Windows background lifecycle scripts
+- [`../README.md#ubuntulinux-background-scripts`](../README.md#ubuntulinux-background-scripts): Ubuntu/Linux background scripts and `systemd --user` service flow
 
 ## Release History and Roadmap
 

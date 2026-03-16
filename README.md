@@ -110,6 +110,52 @@ Notes:
 - Use `-Foreground` for interactive logs.
 - Background logs: `logs\dashboard.log` and `logs\dashboard.stderr.log`.
 
+## Ubuntu/Linux Background Scripts
+
+Use these from a shell in the repo root:
+
+```bash
+./scripts/start-dashboard.sh
+./scripts/stop-dashboard.sh
+./scripts/install-dashboard-user-service.sh --service-name server-monitor-dashboard.service --port 8080 --start-now
+```
+
+Notes:
+
+- `start-dashboard.sh` runs in background by default.
+- Use `--foreground` for interactive logs.
+- Background logs: `logs/dashboard.log` and `logs/dashboard.stderr.log`.
+- The service installer configures a `systemd --user` service.
+- `start-dashboard.sh` and `stop-dashboard.sh` use `logs/dashboard.pid` for direct stop targeting.
+
+Common `systemd --user` operations:
+
+```bash
+systemctl --user status server-monitor-dashboard.service
+systemctl --user restart server-monitor-dashboard.service
+journalctl --user -u server-monitor-dashboard.service -f
+```
+
+Optional (for auto-start after reboot without interactive login):
+
+```bash
+sudo loginctl enable-linger "$USER"
+```
+
+Troubleshooting (Ubuntu/Linux):
+
+- `systemctl --user ...` fails with `Failed to connect to bus`:
+  - Run from a normal logged-in user session (not `sudo -s` root shell).
+  - Ensure `XDG_RUNTIME_DIR` is set (usually automatic in interactive login sessions).
+- Service is enabled but does not start after reboot:
+  - Run `sudo loginctl enable-linger "$USER"` once.
+  - Re-check with `systemctl --user is-enabled server-monitor-dashboard.service`.
+- Service starts then exits immediately:
+  - Check logs with `journalctl --user -u server-monitor-dashboard.service -n 100 --no-pager`.
+  - Confirm virtualenv runtime exists: `ls -l .venv/bin/python` (run `uv sync` if missing).
+- Scripts are not executable:
+  - Run `chmod +x scripts/start-dashboard.sh scripts/stop-dashboard.sh scripts/install-dashboard-user-service.sh`.
+
 ## Notes
 
 - Runtime loads `config/servers.toml` by default.
