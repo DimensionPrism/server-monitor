@@ -34,6 +34,7 @@ class MetricsStreamManager:
         self._max_parse_failures = max(1, int(max_parse_failures))
         self._tasks: dict[str, asyncio.Task] = {}
         self._processes: dict[str, object] = {}
+        self._server_aliases: dict[str, str] = {}
         self._stop_event = asyncio.Event()
 
     def bind(
@@ -49,26 +50,48 @@ class MetricsStreamManager:
 
     async def start(self, servers) -> None:
         self._stop_event.clear()
-        for server in servers:
-            if server.server_id in self._tasks:
+        await self.sync_servers(servers)
+
+    async def sync_servers(self, servers) -> None:
+        desired_servers = {
+            server.server_id: server
+            for server in servers
+            if "system" in server.enabled_panels or "gpu" in server.enabled_panels
+        }
+
+        for server_id in list(self._tasks):
+            if server_id not in desired_servers:
+                await self._stop_server_task(server_id)
+
+        for server_id, server in desired_servers.items():
+            if server_id in self._tasks and self._server_aliases.get(server_id) == server.ssh_alias:
                 continue
-            if "system" not in server.enabled_panels and "gpu" not in server.enabled_panels:
+            if server_id in self._tasks:
+                await self._stop_server_task(server_id)
+            if self._stop_event.is_set():
                 continue
             task = asyncio.create_task(self._run_server(server), name=f"metrics-stream-{server.server_id}")
             self._tasks[server.server_id] = task
+            self._server_aliases[server.server_id] = server.ssh_alias
 
     async def stop(self) -> None:
         self._stop_event.set()
-        tasks = list(self._tasks.values())
-        for process in list(self._processes.values()):
-            process.kill()
-        for task in tasks:
-            task.cancel()
-        for task in tasks:
-            with suppress(asyncio.CancelledError):
-                await task
+        for server_id in list(self._tasks):
+            await self._stop_server_task(server_id)
         self._tasks.clear()
         self._processes.clear()
+        self._server_aliases.clear()
+
+    async def _stop_server_task(self, server_id: str) -> None:
+        process = self._processes.pop(server_id, None)
+        if process is not None:
+            process.kill()
+        task = self._tasks.pop(server_id, None)
+        if task is not None:
+            task.cancel()
+            with suppress(asyncio.CancelledError):
+                await task
+        self._server_aliases.pop(server_id, None)
 
     async def _run_server(self, server) -> None:
         try:

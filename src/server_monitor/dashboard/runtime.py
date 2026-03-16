@@ -174,6 +174,8 @@ class DashboardRuntime:
 
     async def poll_once(self) -> None:
         settings = self.settings_store.load()
+        if self.metrics_stream_manager is not None and hasattr(self.metrics_stream_manager, "sync_servers"):
+            await self.metrics_stream_manager.sync_servers(settings.servers)
         now = datetime.now(UTC)
         tasks = [
             self._poll_server(

@@ -1,5 +1,6 @@
 import os
 import shutil
+import signal
 import subprocess
 from pathlib import Path
 
@@ -27,6 +28,20 @@ def _write_executable(path: Path, content: str) -> None:
     path.chmod(0o755)
 
 
+def _prepare_linux_start_script_fixture(tmp_path: Path) -> tuple[Path, Path]:
+    repo_root = tmp_path / "repo"
+    scripts_dir = repo_root / "scripts"
+    scripts_dir.mkdir(parents=True)
+    (repo_root / "logs").mkdir()
+    (repo_root / ".venv" / "bin").mkdir(parents=True)
+
+    start_path = scripts_dir / "start-dashboard.sh"
+    start_path.write_text(_read_script("start-dashboard.sh"), encoding="utf-8")
+    start_path.chmod(0o755)
+
+    return repo_root, start_path
+
+
 def test_start_dashboard_linux_script_exists_and_runs_uvicorn():
     content = _read_script("start-dashboard.sh")
     assert ".venv/bin/python" in content
@@ -42,15 +57,108 @@ def test_start_dashboard_linux_script_exists_and_runs_uvicorn():
     not CAN_EXECUTE_LINUX_SHELL_TESTS,
     reason="Linux shell execution tests require POSIX + bash",
 )
-def test_start_dashboard_linux_script_fails_for_foreground_when_port_is_busy(tmp_path):
-    repo_root = tmp_path / "repo"
-    scripts_dir = repo_root / "scripts"
-    scripts_dir.mkdir(parents=True)
-    (repo_root / "logs").mkdir()
+def test_start_dashboard_linux_script_background_fails_when_process_exits_early(tmp_path):
+    repo_root, start_path = _prepare_linux_start_script_fixture(tmp_path)
+    fake_bin = tmp_path / "fake-bin"
+    fake_bin.mkdir()
+    _write_executable(
+        fake_bin / "ss",
+        """#!/usr/bin/env bash
+printf 'State Recv-Q Send-Q Local Address:Port Peer Address:Port\n'
+""",
+    )
+    _write_executable(
+        repo_root / ".venv" / "bin" / "python",
+        """#!/usr/bin/env bash
+if [[ "$1" == "-m" && "$2" == "uvicorn" ]]; then
+  exit 1
+fi
+if [[ "$1" == "-c" ]]; then
+  exit 1
+fi
+exit 1
+""",
+    )
 
-    start_path = scripts_dir / "start-dashboard.sh"
-    start_path.write_text(_read_script("start-dashboard.sh"), encoding="utf-8")
-    start_path.chmod(0o755)
+    env = os.environ.copy()
+    env["PATH"] = f"{fake_bin}{os.pathsep}{env['PATH']}"
+    proc = subprocess.run(
+        [BASH_PATH, str(start_path)],
+        cwd=repo_root,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert proc.returncode == 1
+    assert not (repo_root / "logs" / "dashboard.pid").exists()
+
+
+@pytest.mark.skipif(
+    not CAN_EXECUTE_LINUX_SHELL_TESTS,
+    reason="Linux shell execution tests require POSIX + bash",
+)
+def test_start_dashboard_linux_script_background_waits_for_health_check(tmp_path):
+    repo_root, start_path = _prepare_linux_start_script_fixture(tmp_path)
+    fake_bin = tmp_path / "fake-bin"
+    fake_bin.mkdir()
+    _write_executable(
+        fake_bin / "ss",
+        """#!/usr/bin/env bash
+printf 'State Recv-Q Send-Q Local Address:Port Peer Address:Port\n'
+""",
+    )
+
+    health_count_path = tmp_path / "health-check-count.txt"
+    _write_executable(
+        repo_root / ".venv" / "bin" / "python",
+        f"""#!/usr/bin/env bash
+if [[ "$1" == "-m" && "$2" == "uvicorn" ]]; then
+  sleep 120
+  exit 0
+fi
+if [[ "$1" == "-c" ]]; then
+  count=0
+  if [[ -f "{health_count_path}" ]]; then
+    count=$(cat "{health_count_path}")
+  fi
+  count=$((count + 1))
+  echo "$count" > "{health_count_path}"
+  if [[ "$count" -ge 2 ]]; then
+    exit 0
+  fi
+  exit 1
+fi
+exit 1
+""",
+    )
+
+    env = os.environ.copy()
+    env["PATH"] = f"{fake_bin}{os.pathsep}{env['PATH']}"
+    proc = subprocess.run(
+        [BASH_PATH, str(start_path)],
+        cwd=repo_root,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert proc.returncode == 0
+    assert health_count_path.exists()
+    assert int(health_count_path.read_text(encoding="utf-8").strip()) >= 2
+    pid_path = repo_root / "logs" / "dashboard.pid"
+    assert pid_path.exists()
+    os.kill(int(pid_path.read_text(encoding="utf-8").strip()), signal.SIGTERM)
+
+
+@pytest.mark.skipif(
+    not CAN_EXECUTE_LINUX_SHELL_TESTS,
+    reason="Linux shell execution tests require POSIX + bash",
+)
+def test_start_dashboard_linux_script_fails_for_foreground_when_port_is_busy(tmp_path):
+    repo_root, start_path = _prepare_linux_start_script_fixture(tmp_path)
 
     fake_bin = tmp_path / "fake-bin"
     fake_bin.mkdir()
