@@ -21,7 +21,7 @@ def _wait_for_health(port: int, timeout_seconds: float = 6.0) -> None:
     url = f"http://127.0.0.1:{port}/health"
     while time.time() < deadline:
         with contextlib.suppress(Exception):
-            response = httpx.get(url, timeout=0.2)
+            response = httpx.get(url, timeout=0.2, trust_env=False)
             if response.status_code == 200:
                 return
         time.sleep(0.1)

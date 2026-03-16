@@ -45,6 +45,7 @@ Engineering archive note: dated files under `docs/superpowers/specs/` and `docs/
 - Landed: streamed metrics now keep last-good samples visible across reconnects and age freshness from `LIVE` to `CACHED`.
 - Landed: `git` and `clash` remain on the slower batched status poller.
 - Landed: diagnostics now include per-server `metrics_stream` state, last sample metadata, and reconnect counters.
+- Landed: local dashboard lifecycle is now documented for both Windows (PowerShell scripts) and Ubuntu/Linux (POSIX shell scripts + optional `systemd --user` service install).
 
 ## Short-Term TODO (1-3 weeks)
 
