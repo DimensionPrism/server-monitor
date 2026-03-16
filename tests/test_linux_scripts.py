@@ -1,3 +1,4 @@
+import contextlib
 import os
 import shutil
 import signal
@@ -145,12 +146,16 @@ exit 1
         check=False,
     )
 
-    assert proc.returncode == 0
-    assert health_count_path.exists()
-    assert int(health_count_path.read_text(encoding="utf-8").strip()) >= 2
     pid_path = repo_root / "logs" / "dashboard.pid"
-    assert pid_path.exists()
-    os.kill(int(pid_path.read_text(encoding="utf-8").strip()), signal.SIGTERM)
+    try:
+        assert proc.returncode == 0
+        assert health_count_path.exists()
+        assert int(health_count_path.read_text(encoding="utf-8").strip()) >= 2
+        assert pid_path.exists()
+    finally:
+        if pid_path.exists():
+            with contextlib.suppress(OSError, ProcessLookupError):
+                os.kill(int(pid_path.read_text(encoding="utf-8").strip()), signal.SIGTERM)
 
 
 @pytest.mark.skipif(
