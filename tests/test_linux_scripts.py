@@ -1,10 +1,15 @@
 import os
+import shutil
 import subprocess
 from pathlib import Path
+
+import pytest
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS_DIR = REPO_ROOT / "scripts"
+BASH_PATH = shutil.which("bash")
+CAN_EXECUTE_LINUX_SHELL_TESTS = os.name == "posix" and BASH_PATH is not None
 
 LINUX_SCRIPTS = [
     "start-dashboard.sh",
@@ -33,6 +38,10 @@ def test_start_dashboard_linux_script_exists_and_runs_uvicorn():
     assert "logs/dashboard.log" in content
 
 
+@pytest.mark.skipif(
+    not CAN_EXECUTE_LINUX_SHELL_TESTS,
+    reason="Linux shell execution tests require POSIX + bash",
+)
 def test_start_dashboard_linux_script_fails_for_foreground_when_port_is_busy(tmp_path):
     repo_root = tmp_path / "repo"
     scripts_dir = repo_root / "scripts"
@@ -54,9 +63,9 @@ printf 'LISTEN 0 128 127.0.0.1:8080 0.0.0.0:*\n'
     )
 
     env = os.environ.copy()
-    env["PATH"] = f"{fake_bin}:{env['PATH']}"
+    env["PATH"] = f"{fake_bin}{os.pathsep}{env['PATH']}"
     proc = subprocess.run(
-        [str(start_path), "--foreground"],
+        [BASH_PATH, str(start_path), "--foreground"],
         cwd=repo_root,
         env=env,
         capture_output=True,
@@ -74,6 +83,10 @@ def test_stop_dashboard_linux_script_exists_and_targets_dashboard_process():
     assert "pkill -f" not in content
 
 
+@pytest.mark.skipif(
+    not CAN_EXECUTE_LINUX_SHELL_TESTS,
+    reason="Linux shell execution tests require POSIX + bash",
+)
 def test_stop_dashboard_linux_script_does_not_use_pattern_kill_fallback(tmp_path):
     repo_root = tmp_path / "repo"
     scripts_dir = repo_root / "scripts"
@@ -102,9 +115,9 @@ exit 0
     )
 
     env = os.environ.copy()
-    env["PATH"] = f"{fake_bin}:{env['PATH']}"
+    env["PATH"] = f"{fake_bin}{os.pathsep}{env['PATH']}"
     proc = subprocess.run(
-        [str(stop_path)],
+        [BASH_PATH, str(stop_path)],
         cwd=repo_root,
         env=env,
         capture_output=True,
