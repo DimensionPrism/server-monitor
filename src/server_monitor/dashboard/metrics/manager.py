@@ -7,8 +7,8 @@ from collections.abc import Awaitable, Callable
 from contextlib import suppress
 import inspect
 
-from server_monitor.dashboard.metrics_stream_command import build_metrics_stream_command
-from server_monitor.dashboard.metrics_stream_protocol import (
+from server_monitor.dashboard.metrics.command import build_metrics_stream_command
+from server_monitor.dashboard.metrics.protocol import (
     MetricsStreamProtocolError,
     parse_metrics_stream_line,
 )
