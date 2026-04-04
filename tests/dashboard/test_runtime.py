@@ -51,6 +51,15 @@ class _FakeMetricsStreamManager:
         await self._on_state_change(server_id, state)
 
 
+class _FakeSyncingMetricsStreamManager(_FakeMetricsStreamManager):
+    def __init__(self):
+        super().__init__()
+        self.sync_calls = []
+
+    async def sync_servers(self, servers) -> None:
+        self.sync_calls.append(list(servers))
+
+
 @dataclass
 class _Result:
     stdout: str
@@ -2534,6 +2543,41 @@ async def test_runtime_metrics_stream_start_binds_and_starts_manager():
     assert len(metrics_stream_manager.started_with) == 1
     assert metrics_stream_manager.started_with[0][0].server_id == "server-stream-start"
     assert metrics_stream_manager.stopped is True
+
+
+@pytest.mark.asyncio
+async def test_runtime_metrics_stream_poll_once_syncs_servers_after_settings_change():
+    from server_monitor.dashboard.runtime import DashboardRuntime
+    from server_monitor.dashboard.ws_hub import WebSocketHub
+
+    settings = DashboardSettings(
+        metrics_interval_seconds=3600.0,
+        status_interval_seconds=3600.0,
+        servers=[],
+    )
+    settings_store = _FakeSettingsStore(settings)
+    metrics_stream_manager = _FakeSyncingMetricsStreamManager()
+    runtime = DashboardRuntime(
+        hub=WebSocketHub(),
+        settings_store=settings_store,
+        executor=_FakeExecutor(),
+        metrics_stream_manager=metrics_stream_manager,
+    )
+
+    await runtime.start()
+    settings_store._settings.servers.append(
+        ServerSettings(
+            server_id="server-stream-added",
+            ssh_alias="srv-stream-added",
+            working_dirs=[],
+            enabled_panels=["system", "gpu"],
+        )
+    )
+    await runtime.poll_once()
+    await runtime.stop()
+
+    assert metrics_stream_manager.sync_calls
+    assert metrics_stream_manager.sync_calls[-1][0].server_id == "server-stream-added"
 
 
 @pytest.mark.asyncio
