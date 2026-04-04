@@ -783,7 +783,7 @@ class _ConcurrencyTrackingRunner:
 
 
 def test_ssh_command_executor_uses_dashboard_command_runner():
-    from server_monitor.dashboard.command_runner import CommandRunner
+    from server_monitor.dashboard.ssh import CommandRunner
     from server_monitor.dashboard.runtime import SshCommandExecutor
 
     executor = SshCommandExecutor()
@@ -1725,7 +1725,7 @@ async def test_runtime_does_not_retry_parse_failure():
 
 @pytest.mark.asyncio
 async def test_runtime_applies_cooldown_after_repeated_clash_secret_failures():
-    from server_monitor.dashboard.command_policy import CommandKind, CommandPolicy
+    from server_monitor.dashboard.health import CommandKind, CommandPolicy
     from server_monitor.dashboard.runtime import DashboardRuntime
     from server_monitor.dashboard.ws_hub import WebSocketHub
 
@@ -1776,7 +1776,7 @@ async def test_runtime_applies_cooldown_after_repeated_clash_secret_failures():
 
 @pytest.mark.asyncio
 async def test_runtime_keeps_cached_git_repo_during_cooldown():
-    from server_monitor.dashboard.command_policy import CommandKind, CommandPolicy
+    from server_monitor.dashboard.health import CommandKind, CommandPolicy
     from server_monitor.dashboard.runtime import DashboardRuntime
     from server_monitor.dashboard.ws_hub import WebSocketHub
 
@@ -2002,7 +2002,7 @@ async def test_runtime_emits_unknown_git_health_when_status_poll_never_runs():
 
 @pytest.mark.asyncio
 async def test_runtime_emits_cooldown_state_for_clash_after_cooldown_skip():
-    from server_monitor.dashboard.command_policy import CommandKind, CommandPolicy
+    from server_monitor.dashboard.health import CommandKind, CommandPolicy
     from server_monitor.dashboard.runtime import DashboardRuntime
     from server_monitor.dashboard.ws_hub import WebSocketHub
 
@@ -2084,7 +2084,7 @@ async def test_runtime_git_health_uses_worst_repo_state():
 
 @pytest.mark.asyncio
 async def test_runtime_clash_health_prefers_secret_failure_over_old_probe_success():
-    from server_monitor.dashboard.command_policy import CommandKind, CommandPolicy
+    from server_monitor.dashboard.health import CommandKind, CommandPolicy
     from server_monitor.dashboard.runtime import DashboardRuntime
     from server_monitor.dashboard.ws_hub import WebSocketHub
 
@@ -2614,7 +2614,7 @@ async def test_runtime_metrics_stream_poll_once_syncs_servers_after_settings_cha
 
 @pytest.mark.asyncio
 async def test_runtime_metrics_stream_sample_updates_snapshot_and_broadcasts_immediately():
-    from server_monitor.dashboard.metrics_stream_protocol import MetricsStreamSample
+    from server_monitor.dashboard.metrics.protocol import MetricsStreamSample
     from server_monitor.dashboard.runtime import DashboardRuntime
     from server_monitor.dashboard.ws_hub import WebSocketHub
 
@@ -2720,7 +2720,7 @@ async def test_runtime_metrics_stream_poll_once_only_runs_git_and_clash_status()
 
 @pytest.mark.asyncio
 async def test_runtime_metrics_stream_health_reports_transport_latency():
-    from server_monitor.dashboard.metrics_stream_protocol import MetricsStreamSample
+    from server_monitor.dashboard.metrics.protocol import MetricsStreamSample
     from server_monitor.dashboard.runtime import DashboardRuntime
     from server_monitor.dashboard.ws_hub import WebSocketHub
 
@@ -2786,7 +2786,7 @@ async def test_runtime_metrics_stream_health_reports_transport_latency():
 
 @pytest.mark.asyncio
 async def test_runtime_metrics_stream_cached_disconnect_keeps_last_sample_visible():
-    from server_monitor.dashboard.metrics_stream_protocol import MetricsStreamSample
+    from server_monitor.dashboard.metrics.protocol import MetricsStreamSample
     from server_monitor.dashboard.runtime import DashboardRuntime
     from server_monitor.dashboard.ws_hub import WebSocketHub
 

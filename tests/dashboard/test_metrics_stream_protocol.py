@@ -2,7 +2,10 @@ import pytest
 
 
 def test_parse_metrics_stream_line_returns_typed_sample():
-    from server_monitor.dashboard.metrics_stream_protocol import MetricsStreamSample, parse_metrics_stream_line
+    from server_monitor.dashboard.metrics.protocol import (
+        MetricsStreamSample,
+        parse_metrics_stream_line,
+    )
 
     line = (
         '{"sequence":7,"server_time":"2026-03-12T12:00:00+00:00","sample_interval_ms":250,'
@@ -37,14 +40,20 @@ def test_parse_metrics_stream_line_returns_typed_sample():
 
 
 def test_parse_metrics_stream_line_rejects_malformed_json():
-    from server_monitor.dashboard.metrics_stream_protocol import MetricsStreamProtocolError, parse_metrics_stream_line
+    from server_monitor.dashboard.metrics.protocol import (
+        MetricsStreamProtocolError,
+        parse_metrics_stream_line,
+    )
 
     with pytest.raises(MetricsStreamProtocolError, match="malformed JSON"):
         parse_metrics_stream_line('{"sequence":1')
 
 
 def test_parse_metrics_stream_line_rejects_missing_required_field():
-    from server_monitor.dashboard.metrics_stream_protocol import MetricsStreamProtocolError, parse_metrics_stream_line
+    from server_monitor.dashboard.metrics.protocol import (
+        MetricsStreamProtocolError,
+        parse_metrics_stream_line,
+    )
 
     line = (
         '{"server_time":"2026-03-12T12:00:00+00:00","sample_interval_ms":250,'
@@ -52,5 +61,7 @@ def test_parse_metrics_stream_line_rejects_missing_required_field():
         '"network_rx_kbps":44.0,"network_tx_kbps":55.0,"gpus":[]}'
     )
 
-    with pytest.raises(MetricsStreamProtocolError, match="missing required field 'sequence'"):
+    with pytest.raises(
+        MetricsStreamProtocolError, match="missing required field 'sequence'"
+    ):
         parse_metrics_stream_line(line)

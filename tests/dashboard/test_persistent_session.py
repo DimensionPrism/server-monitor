@@ -3,7 +3,10 @@ import re
 
 import pytest
 
-from server_monitor.dashboard.persistent_session import PersistentBatchTransport, PersistentSessionProtocolError
+from server_monitor.dashboard.ssh.persistent_session import (
+    PersistentBatchTransport,
+    PersistentSessionProtocolError,
+)
 
 
 class _FakeStreamReader:
@@ -98,7 +101,9 @@ async def test_persistent_batch_transport_starts_lazily_and_reuses_session_for_s
     created_processes = []
 
     async def _factory(alias: str):
-        process = _FakeProcess([_success_response("alpha\n"), _success_response("beta\n")])
+        process = _FakeProcess(
+            [_success_response("alpha\n"), _success_response("beta\n")]
+        )
         created_processes.append((alias, process))
         return process
 
@@ -127,7 +132,9 @@ async def test_persistent_batch_transport_recreates_session_after_eof():
 
     transport = PersistentBatchTransport(process_factory=_factory)
 
-    with pytest.raises(PersistentSessionProtocolError, match="before completion marker"):
+    with pytest.raises(
+        PersistentSessionProtocolError, match="before completion marker"
+    ):
         await transport.run("srv-a", "echo alpha", timeout_seconds=1.0)
 
     result = await transport.run("srv-a", "echo beta", timeout_seconds=1.0)
@@ -169,7 +176,9 @@ async def test_persistent_batch_transport_raises_on_malformed_completion_marker(
 
     transport = PersistentBatchTransport(process_factory=_factory)
 
-    with pytest.raises(PersistentSessionProtocolError, match="unexpected completion marker"):
+    with pytest.raises(
+        PersistentSessionProtocolError, match="unexpected completion marker"
+    ):
         await transport.run("srv-a", "echo alpha", timeout_seconds=1.0)
 
 
@@ -188,9 +197,13 @@ async def test_persistent_batch_transport_serializes_same_alias_requests():
 
     transport = PersistentBatchTransport(process_factory=_factory)
 
-    first_task = asyncio.create_task(transport.run("srv-a", "echo first", timeout_seconds=1.0))
+    first_task = asyncio.create_task(
+        transport.run("srv-a", "echo first", timeout_seconds=1.0)
+    )
     await asyncio.sleep(0)
-    second_task = asyncio.create_task(transport.run("srv-a", "echo second", timeout_seconds=1.0))
+    second_task = asyncio.create_task(
+        transport.run("srv-a", "echo second", timeout_seconds=1.0)
+    )
     await asyncio.sleep(0)
 
     assert len(process.calls) == 1

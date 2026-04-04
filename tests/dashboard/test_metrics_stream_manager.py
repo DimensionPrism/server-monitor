@@ -22,7 +22,9 @@ class _FakeStreamReader:
 
 
 class _FakeProcess:
-    def __init__(self, lines: list[str] | None = None, *, close_immediately: bool = False):
+    def __init__(
+        self, lines: list[str] | None = None, *, close_immediately: bool = False
+    ):
         self.stdout = _FakeStreamReader(lines)
         self.killed = False
         self.waited = False
@@ -40,7 +42,7 @@ class _FakeProcess:
 
 @pytest.mark.asyncio
 async def test_metrics_stream_manager_starts_one_process_per_server():
-    from server_monitor.dashboard.metrics_stream_manager import MetricsStreamManager
+    from server_monitor.dashboard.metrics.manager import MetricsStreamManager
 
     created = []
 
@@ -56,8 +58,12 @@ async def test_metrics_stream_manager_starts_one_process_per_server():
     )
 
     servers = [
-        ServerSettings(server_id="srv-a", ssh_alias="server-a", enabled_panels=["system", "gpu"]),
-        ServerSettings(server_id="srv-b", ssh_alias="server-b", enabled_panels=["system", "gpu"]),
+        ServerSettings(
+            server_id="srv-a", ssh_alias="server-a", enabled_panels=["system", "gpu"]
+        ),
+        ServerSettings(
+            server_id="srv-b", ssh_alias="server-b", enabled_panels=["system", "gpu"]
+        ),
     ]
 
     await manager.start(servers)
@@ -70,7 +76,7 @@ async def test_metrics_stream_manager_starts_one_process_per_server():
 
 @pytest.mark.asyncio
 async def test_metrics_stream_manager_delivers_samples_to_callback():
-    from server_monitor.dashboard.metrics_stream_manager import MetricsStreamManager
+    from server_monitor.dashboard.metrics.manager import MetricsStreamManager
 
     samples = []
 
@@ -91,7 +97,15 @@ async def test_metrics_stream_manager_delivers_samples_to_callback():
         on_state_change=lambda server_id, state: None,
     )
 
-    await manager.start([ServerSettings(server_id="srv-a", ssh_alias="server-a", enabled_panels=["system", "gpu"])])
+    await manager.start(
+        [
+            ServerSettings(
+                server_id="srv-a",
+                ssh_alias="server-a",
+                enabled_panels=["system", "gpu"],
+            )
+        ]
+    )
     await asyncio.sleep(0.01)
     await manager.stop()
 
@@ -100,7 +114,7 @@ async def test_metrics_stream_manager_delivers_samples_to_callback():
 
 @pytest.mark.asyncio
 async def test_metrics_stream_manager_drops_one_malformed_line_without_restarting():
-    from server_monitor.dashboard.metrics_stream_manager import MetricsStreamManager
+    from server_monitor.dashboard.metrics.manager import MetricsStreamManager
 
     created = []
     samples = []
@@ -129,7 +143,15 @@ async def test_metrics_stream_manager_drops_one_malformed_line_without_restartin
         sleep_func=_sleep,
     )
 
-    await manager.start([ServerSettings(server_id="srv-a", ssh_alias="server-a", enabled_panels=["system", "gpu"])])
+    await manager.start(
+        [
+            ServerSettings(
+                server_id="srv-a",
+                ssh_alias="server-a",
+                enabled_panels=["system", "gpu"],
+            )
+        ]
+    )
     await asyncio.sleep(0.01)
     await manager.stop()
 
@@ -140,7 +162,7 @@ async def test_metrics_stream_manager_drops_one_malformed_line_without_restartin
 
 @pytest.mark.asyncio
 async def test_metrics_stream_manager_reconnects_after_repeated_parse_failures():
-    from server_monitor.dashboard.metrics_stream_manager import MetricsStreamManager
+    from server_monitor.dashboard.metrics.manager import MetricsStreamManager
 
     processes = [
         _FakeProcess(['{"sequence":1\n', '{"sequence":2\n', '{"sequence":3\n']),
@@ -178,7 +200,15 @@ async def test_metrics_stream_manager_reconnects_after_repeated_parse_failures()
         max_parse_failures=3,
     )
 
-    await manager.start([ServerSettings(server_id="srv-a", ssh_alias="server-a", enabled_panels=["system", "gpu"])])
+    await manager.start(
+        [
+            ServerSettings(
+                server_id="srv-a",
+                ssh_alias="server-a",
+                enabled_panels=["system", "gpu"],
+            )
+        ]
+    )
     await asyncio.sleep(0.01)
     await manager.stop()
 
@@ -190,7 +220,7 @@ async def test_metrics_stream_manager_reconnects_after_repeated_parse_failures()
 
 @pytest.mark.asyncio
 async def test_metrics_stream_manager_reconnects_after_eof_with_bounded_backoff():
-    from server_monitor.dashboard.metrics_stream_manager import MetricsStreamManager
+    from server_monitor.dashboard.metrics.manager import MetricsStreamManager
 
     processes = [
         _FakeProcess(close_immediately=True),
@@ -223,7 +253,15 @@ async def test_metrics_stream_manager_reconnects_after_eof_with_bounded_backoff(
         reconnect_delays=(1.0, 2.0, 5.0),
     )
 
-    await manager.start([ServerSettings(server_id="srv-a", ssh_alias="server-a", enabled_panels=["system", "gpu"])])
+    await manager.start(
+        [
+            ServerSettings(
+                server_id="srv-a",
+                ssh_alias="server-a",
+                enabled_panels=["system", "gpu"],
+            )
+        ]
+    )
     await asyncio.sleep(0.01)
     await manager.stop()
 
@@ -234,7 +272,7 @@ async def test_metrics_stream_manager_reconnects_after_eof_with_bounded_backoff(
 
 @pytest.mark.asyncio
 async def test_metrics_stream_manager_stop_prevents_pending_reconnect_cycle():
-    from server_monitor.dashboard.metrics_stream_manager import MetricsStreamManager
+    from server_monitor.dashboard.metrics.manager import MetricsStreamManager
 
     created = []
     sleep_started = asyncio.Event()
@@ -257,7 +295,15 @@ async def test_metrics_stream_manager_stop_prevents_pending_reconnect_cycle():
         reconnect_delays=(1.0,),
     )
 
-    await manager.start([ServerSettings(server_id="srv-a", ssh_alias="server-a", enabled_panels=["system", "gpu"])])
+    await manager.start(
+        [
+            ServerSettings(
+                server_id="srv-a",
+                ssh_alias="server-a",
+                enabled_panels=["system", "gpu"],
+            )
+        ]
+    )
     await asyncio.wait_for(sleep_started.wait(), timeout=1.0)
     await manager.stop()
     release_sleep.set()
@@ -266,8 +312,10 @@ async def test_metrics_stream_manager_stop_prevents_pending_reconnect_cycle():
 
 
 @pytest.mark.asyncio
-async def test_create_ssh_process_passes_stream_script_as_single_remote_argument(monkeypatch):
-    from server_monitor.dashboard.metrics_stream_manager import _create_ssh_process
+async def test_create_ssh_process_passes_stream_script_as_single_remote_argument(
+    monkeypatch,
+):
+    from server_monitor.dashboard.metrics.manager import _create_ssh_process
 
     captured = {}
 

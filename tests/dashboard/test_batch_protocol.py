@@ -1,6 +1,6 @@
 import pytest
 
-from server_monitor.dashboard.batch_protocol import (
+from server_monitor.dashboard.metrics.batch_protocol import (
     BatchProtocolError,
     BatchSection,
     build_metrics_batch_command,
