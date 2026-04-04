@@ -14,9 +14,9 @@ def test_parse_nvidia_smi_fixture():
 
     assert len(parsed) == 2
     assert parsed[0]["index"] == 0
-    assert parsed[0]["utilization_gpu"] == 73
-    assert parsed[0]["memory_used_mb"] == 20480
-    assert parsed[0]["temperature_c"] == 61
+    assert parsed[0]["utilization_gpu_percent"] == 73
+    assert parsed[0]["memory_used_mib"] == 20480
+    assert parsed[0]["temperature_celsius"] == 61
 
 
 def test_parse_nvidia_smi_jetson_na_values_defaults_to_zero():
@@ -28,10 +28,10 @@ def test_parse_nvidia_smi_jetson_na_values_defaults_to_zero():
         {
             "index": 0,
             "name": "Orin (nvgpu)",
-            "utilization_gpu": 0.0,
-            "memory_used_mb": 0.0,
-            "memory_total_mb": 0.0,
-            "temperature_c": 0.0,
+            "utilization_gpu_percent": 0.0,
+            "memory_used_mib": 0.0,
+            "memory_total_mib": 0.0,
+            "temperature_celsius": 0.0,
             "processes": [],
         }
     ]

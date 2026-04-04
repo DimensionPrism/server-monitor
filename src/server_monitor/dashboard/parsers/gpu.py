@@ -19,10 +19,10 @@ def parse_gpu_snapshot(text: str) -> list[dict[str, float | int | str | list]]:
             {
                 "index": _to_int(parts[0]),
                 "name": parts[1],
-                "utilization_gpu": _to_float(parts[2]),
-                "memory_used_mb": _to_float(parts[3]),
-                "memory_total_mb": _to_float(parts[4]),
-                "temperature_c": _to_float(parts[5]),
+                "utilization_gpu_percent": _to_float(parts[2]),
+                "memory_used_mib": _to_float(parts[3]),
+                "memory_total_mib": _to_float(parts[4]),
+                "temperature_celsius": _to_float(parts[5]),
                 "processes": [],
             }
         )
