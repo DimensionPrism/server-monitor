@@ -6,7 +6,6 @@ import asyncio
 from contextlib import suppress
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
-import re
 from types import SimpleNamespace
 import time
 
@@ -33,20 +32,41 @@ from server_monitor.dashboard.normalize import normalize_server_payload
 from server_monitor.dashboard.settings import DashboardSettingsStore, ServerSettings
 from server_monitor.dashboard.terminal_launcher import open_terminal_with_ssh
 from server_monitor.dashboard.ws_hub import WebSocketHub
-
-
-DEFAULT_CLASH = {
-    "running": False,
-    "api_reachable": False,
-    "ui_reachable": False,
-    "message": "not-collected",
-    "ip_location": "",
-    "controller_port": "",
-}
-GIT_OPERATION_TIMEOUT_SECONDS = 20.0
-STATUS_COMMAND_TIMEOUT_SECONDS = 3.0
-STATUS_POLL_INLINE_BUDGET_SECONDS = 0.05
-COMMAND_HEALTH_HISTORY_LIMIT = 20
+from server_monitor.dashboard.runtime_helpers import (
+    DEFAULT_CLASH,
+    GIT_OPERATION_TIMEOUT_SECONDS,
+    STATUS_COMMAND_TIMEOUT_SECONDS,  # noqa: F401
+    STATUS_POLL_INLINE_BUDGET_SECONDS,
+    COMMAND_HEALTH_HISTORY_LIMIT,
+    _needs_status_poll,
+    _metrics_sleep_seconds,
+    _system_command,
+    _gpu_command,
+    _git_status_command,
+    _git_operation_command,
+    _clash_secret_command,
+    _clash_command,
+    _batched_clash_secret_command,
+    _batched_clash_probe_command,
+    _serialize_runtime_settings,
+    _is_ssh_unreachable,
+    _group_batch_sections,
+    _find_server,
+    _should_retry,
+    _build_freshness_entry,
+    _metrics_stream_transport_latency_ms,
+    _extract_clash_secret,  # noqa: F401
+    _parse_required_clash_secret,
+    _empty_repo_status,
+    _empty_system_snapshot,
+    _unknown_command_health_summary,
+    _command_health_summary_from_record,
+    _command_health_state_from_record,
+    _command_health_label,
+    _command_health_severity,
+    _worst_command_health_state,
+    _git_command_health_detail,
+)
 
 
 @dataclass(slots=True)
@@ -87,9 +107,14 @@ class SshCommandExecutor:
         self.runner = runner or CommandRunner(timeout_seconds=3.0)
         self._alias_locks: dict[str, asyncio.Lock] = {}
 
-    async def run(self, alias: str, remote_command: str, timeout_seconds: float | None = None):
+    async def run(
+        self, alias: str, remote_command: str, timeout_seconds: float | None = None
+    ):
         runner = self.runner
-        if timeout_seconds is not None and timeout_seconds != self.runner.timeout_seconds:
+        if (
+            timeout_seconds is not None
+            and timeout_seconds != self.runner.timeout_seconds
+        ):
             runner = CommandRunner(timeout_seconds=timeout_seconds)
         lock = self._alias_locks.setdefault(alias, asyncio.Lock())
         async with lock:
@@ -135,11 +160,15 @@ class DashboardRuntime:
         self._repo_last_poll_ok: dict[str, dict[str, bool]] = {}
         self._status_poll_tasks: dict[str, asyncio.Task] = {}
         self._command_policies = default_command_policies()
-        self._recent_command_health: dict[tuple[str, str, str], list[CommandHealthRecord]] = {}
+        self._recent_command_health: dict[
+            tuple[str, str, str], list[CommandHealthRecord]
+        ] = {}
         self._failure_trackers: dict[tuple[str, str, str], FailureTracker] = {}
         self._metrics_stream_status: dict[str, _MetricsStreamStatus] = {}
 
-        if self.metrics_stream_manager is not None and hasattr(self.metrics_stream_manager, "bind"):
+        if self.metrics_stream_manager is not None and hasattr(
+            self.metrics_stream_manager, "bind"
+        ):
             self.metrics_stream_manager.bind(
                 on_sample=self._handle_metrics_stream_sample,
                 on_state_change=self._handle_metrics_stream_state_change,
@@ -149,9 +178,13 @@ class DashboardRuntime:
         if self._task is not None:
             return
         self._stop_event.clear()
-        if self.metrics_stream_manager is not None and hasattr(self.metrics_stream_manager, "start"):
+        if self.metrics_stream_manager is not None and hasattr(
+            self.metrics_stream_manager, "start"
+        ):
             await self.metrics_stream_manager.start(self.settings_store.load().servers)
-        self._task = asyncio.create_task(self._run_loop(), name="dashboard-runtime-loop")
+        self._task = asyncio.create_task(
+            self._run_loop(), name="dashboard-runtime-loop"
+        )
 
     async def stop(self) -> None:
         self._stop_event.set()
@@ -167,14 +200,18 @@ class DashboardRuntime:
             with suppress(asyncio.CancelledError):
                 await task
         self._status_poll_tasks.clear()
-        if self.metrics_stream_manager is not None and hasattr(self.metrics_stream_manager, "stop"):
+        if self.metrics_stream_manager is not None and hasattr(
+            self.metrics_stream_manager, "stop"
+        ):
             await self.metrics_stream_manager.stop()
         if self.batch_transport is not None and hasattr(self.batch_transport, "close"):
             await self.batch_transport.close()
 
     async def poll_once(self) -> None:
         settings = self.settings_store.load()
-        if self.metrics_stream_manager is not None and hasattr(self.metrics_stream_manager, "sync_servers"):
+        if self.metrics_stream_manager is not None and hasattr(
+            self.metrics_stream_manager, "sync_servers"
+        ):
             await self.metrics_stream_manager.sync_servers(settings.servers)
         now = datetime.now(UTC)
         tasks = [
@@ -215,7 +252,11 @@ class DashboardRuntime:
         snapshot = self._build_cached_snapshot(server_id=server.server_id, now=now)
         host_unreachable = False
 
-        metric_results = {} if self.metrics_stream_manager is not None else await self._poll_metrics(server=server)
+        metric_results = (
+            {}
+            if self.metrics_stream_manager is not None
+            else await self._poll_metrics(server=server)
+        )
 
         if "system" in metric_results:
             system_execution = metric_results["system"]
@@ -229,13 +270,19 @@ class DashboardRuntime:
                 snapshot["metadata"]["system_last_updated_at"] = system_updated_at
             elif system_execution.failure_class == "parse_error":
                 self._system_last_poll_ok[server.server_id] = False
-                snapshot["metadata"]["metrics_error"] = f"system parse failed: {system_execution.message}"
+                snapshot["metadata"]["metrics_error"] = (
+                    f"system parse failed: {system_execution.message}"
+                )
             else:
                 error_text = system_execution.message or "system failed"
                 self._system_last_poll_ok[server.server_id] = False
                 snapshot["metadata"]["metrics_error"] = error_text
-                if system_execution.had_host_unreachable or _is_ssh_unreachable(system_execution.result):
-                    snapshot["metadata"]["ssh_error"] = system_execution.host_unreachable_message or error_text
+                if system_execution.had_host_unreachable or _is_ssh_unreachable(
+                    system_execution.result
+                ):
+                    snapshot["metadata"]["ssh_error"] = (
+                        system_execution.host_unreachable_message or error_text
+                    )
                     host_unreachable = True
 
         if "gpu" in metric_results:
@@ -250,13 +297,19 @@ class DashboardRuntime:
                 snapshot["metadata"]["gpu_last_updated_at"] = gpu_updated_at
             elif gpu_execution.failure_class == "parse_error":
                 self._gpu_last_poll_ok[server.server_id] = False
-                snapshot["metadata"]["gpu_error"] = f"gpu parse failed: {gpu_execution.message}"
+                snapshot["metadata"]["gpu_error"] = (
+                    f"gpu parse failed: {gpu_execution.message}"
+                )
             else:
                 error_text = gpu_execution.message or "gpu failed"
                 self._gpu_last_poll_ok[server.server_id] = False
                 snapshot["metadata"]["gpu_error"] = error_text
-                if gpu_execution.had_host_unreachable or _is_ssh_unreachable(gpu_execution.result):
-                    snapshot["metadata"]["ssh_error"] = gpu_execution.host_unreachable_message or error_text
+                if gpu_execution.had_host_unreachable or _is_ssh_unreachable(
+                    gpu_execution.result
+                ):
+                    snapshot["metadata"]["ssh_error"] = (
+                        gpu_execution.host_unreachable_message or error_text
+                    )
                     host_unreachable = True
 
         should_poll_status = _needs_status_poll(
@@ -267,7 +320,11 @@ class DashboardRuntime:
 
         self._consume_finished_status_poll_task(server.server_id)
 
-        if should_poll_status and ("git" in enabled or "clash" in enabled) and not host_unreachable:
+        if (
+            should_poll_status
+            and ("git" in enabled or "clash" in enabled)
+            and not host_unreachable
+        ):
             await self._start_status_poll_if_needed(server=server, now=now)
         elif should_poll_status and host_unreachable:
             if "git" in enabled:
@@ -322,7 +379,9 @@ class DashboardRuntime:
             status_interval_seconds=settings.status_interval_seconds,
         )
 
-    async def _handle_metrics_stream_state_change(self, server_id: str, state: str) -> None:
+    async def _handle_metrics_stream_state_change(
+        self, server_id: str, state: str
+    ) -> None:
         stream_status = self._metrics_stream_status_for(server_id)
         if state == "reconnecting":
             stream_status.reconnect_count += 1
@@ -378,7 +437,9 @@ class DashboardRuntime:
         for repo in repos:
             normalized_repo = dict(repo)
             repo_path = normalized_repo.get("path")
-            repo_last_poll_ok = repo_poll_ok.get(repo_path) if isinstance(repo_path, str) else None
+            repo_last_poll_ok = (
+                repo_poll_ok.get(repo_path) if isinstance(repo_path, str) else None
+            )
             normalized_repo["freshness"] = _build_freshness_entry(
                 now=now,
                 last_updated_at=normalized_repo.get("last_updated_at"),
@@ -405,14 +466,18 @@ class DashboardRuntime:
                 last_updated_at=self._git_last_updated_at.get(server.server_id),
                 last_poll_ok=self._git_last_poll_ok.get(server.server_id),
                 threshold_seconds=status_threshold_seconds,
-                keep_live_while_inflight=self._is_status_poll_inflight(server.server_id),
+                keep_live_while_inflight=self._is_status_poll_inflight(
+                    server.server_id
+                ),
             ),
             "clash": _build_freshness_entry(
                 now=now,
                 last_updated_at=self._clash_last_updated_at.get(server.server_id),
                 last_poll_ok=self._clash_last_poll_ok.get(server.server_id),
                 threshold_seconds=status_threshold_seconds,
-                keep_live_while_inflight=self._is_status_poll_inflight(server.server_id),
+                keep_live_while_inflight=self._is_status_poll_inflight(
+                    server.server_id
+                ),
             ),
         }
 
@@ -434,7 +499,9 @@ class DashboardRuntime:
         )
         await self.hub.broadcast(normalized)
 
-    async def _poll_metrics(self, *, server: ServerSettings) -> dict[str, _PolicyExecutionOutcome]:
+    async def _poll_metrics(
+        self, *, server: ServerSettings
+    ) -> dict[str, _PolicyExecutionOutcome]:
         enabled = set(server.enabled_panels)
         if "system" in enabled and "gpu" in enabled:
             return await self._poll_metrics_batch(server=server)
@@ -474,7 +541,9 @@ class DashboardRuntime:
                 metric_results[key] = result
         return metric_results
 
-    async def _poll_metrics_batch(self, *, server: ServerSettings) -> dict[str, _PolicyExecutionOutcome]:
+    async def _poll_metrics_batch(
+        self, *, server: ServerSettings
+    ) -> dict[str, _PolicyExecutionOutcome]:
         token = "SMTOKEN"
         batch_timeout_seconds = max(
             self._command_policies[CommandKind.SYSTEM].timeout_seconds,
@@ -575,7 +644,9 @@ class DashboardRuntime:
             return
         self._consume_status_poll_task_result(server_id, task)
 
-    def _consume_status_poll_task_result(self, server_id: str, task: asyncio.Task) -> None:
+    def _consume_status_poll_task_result(
+        self, server_id: str, task: asyncio.Task
+    ) -> None:
         current = self._status_poll_tasks.get(server_id)
         if current is task:
             self._status_poll_tasks.pop(server_id, None)
@@ -586,7 +657,9 @@ class DashboardRuntime:
                 self._git_last_poll_ok[server_id] = False
                 self._clash_last_poll_ok[server_id] = False
 
-    async def _start_status_poll_if_needed(self, *, server: ServerSettings, now: datetime) -> None:
+    async def _start_status_poll_if_needed(
+        self, *, server: ServerSettings, now: datetime
+    ) -> None:
         existing = self._status_poll_tasks.get(server.server_id)
         if existing is not None:
             if existing.done():
@@ -602,24 +675,34 @@ class DashboardRuntime:
         self._last_status_poll[server.server_id] = now
 
         try:
-            await asyncio.wait_for(asyncio.shield(poll_task), timeout=STATUS_POLL_INLINE_BUDGET_SECONDS)
+            await asyncio.wait_for(
+                asyncio.shield(poll_task), timeout=STATUS_POLL_INLINE_BUDGET_SECONDS
+            )
         except asyncio.TimeoutError:
             return
         finally:
             self._consume_finished_status_poll_task(server.server_id)
 
-    async def _poll_status_panels(self, *, server: ServerSettings, polled_at_iso: str) -> None:
+    async def _poll_status_panels(
+        self, *, server: ServerSettings, polled_at_iso: str
+    ) -> None:
         enabled = set(server.enabled_panels)
         allowed_paths = set(server.working_dirs)
         previous_repos = [
-            repo for repo in self._repo_cache.get(server.server_id, []) if repo.get("path") in allowed_paths
+            repo
+            for repo in self._repo_cache.get(server.server_id, [])
+            if repo.get("path") in allowed_paths
         ]
         if not ("git" in enabled and "clash" in enabled):
             status_tasks: dict[str, asyncio.Task] = {}
 
             if "git" in enabled:
                 status_tasks["git"] = asyncio.create_task(
-                    self._poll_git_repos(server, previous_repos=previous_repos, polled_at_iso=polled_at_iso)
+                    self._poll_git_repos(
+                        server,
+                        previous_repos=previous_repos,
+                        polled_at_iso=polled_at_iso,
+                    )
                 )
 
             if "clash" in enabled:
@@ -650,7 +733,10 @@ class DashboardRuntime:
                             cache_used=server.server_id in self._clash_cache,
                         )
                     )
-                elif secret_execution.failure_class == "parse_error" and secret_execution.message == "secret-unavailable":
+                elif (
+                    secret_execution.failure_class == "parse_error"
+                    and secret_execution.message == "secret-unavailable"
+                ):
                     clash = dict(self._clash_cache.get(server.server_id, DEFAULT_CLASH))
                     clash["api_reachable"] = False
                     clash["ui_reachable"] = False
@@ -665,7 +751,9 @@ class DashboardRuntime:
 
             status_results: dict[str, object] = {}
             if status_tasks:
-                gathered = await asyncio.gather(*status_tasks.values(), return_exceptions=True)
+                gathered = await asyncio.gather(
+                    *status_tasks.values(), return_exceptions=True
+                )
                 for key, result in zip(status_tasks.keys(), gathered):
                     status_results[key] = result
 
@@ -676,7 +764,9 @@ class DashboardRuntime:
                 else:
                     polled_repos, successful_polls, repo_poll_ok = git_result
                     total_repos = len(server.working_dirs)
-                    self._git_last_poll_ok[server.server_id] = successful_polls == total_repos
+                    self._git_last_poll_ok[server.server_id] = (
+                        successful_polls == total_repos
+                    )
                     self._repo_last_poll_ok[server.server_id] = repo_poll_ok
                     if successful_polls > 0 or len(previous_repos) == 0:
                         self._repo_cache[server.server_id] = polled_repos
@@ -702,11 +792,20 @@ class DashboardRuntime:
             if isinstance(repo, dict) and isinstance(repo.get("path"), str)
         }
 
-        git_commands = [(repo_path, _git_status_command(repo_path)) for repo_path in server.working_dirs] if "git" in enabled else []
+        git_commands = (
+            [
+                (repo_path, _git_status_command(repo_path))
+                for repo_path in server.working_dirs
+            ]
+            if "git" in enabled
+            else []
+        )
         batch_command = build_status_batch_command(
             token="SMTOKEN",
             git_commands=git_commands,
-            clash_secret_command=_batched_clash_secret_command() if "clash" in enabled else "true",
+            clash_secret_command=_batched_clash_secret_command()
+            if "clash" in enabled
+            else "true",
             clash_probe_command=(
                 _batched_clash_probe_command(
                     api_probe_url=server.clash_api_probe_url,
@@ -717,9 +816,15 @@ class DashboardRuntime:
             ),
         )
         batch_timeout_seconds = max(
-            self._command_policies[CommandKind.GIT_STATUS].timeout_seconds if "git" in enabled else 0.0,
-            self._command_policies[CommandKind.CLASH_SECRET].timeout_seconds if "clash" in enabled else 0.0,
-            self._command_policies[CommandKind.CLASH_PROBE].timeout_seconds if "clash" in enabled else 0.0,
+            self._command_policies[CommandKind.GIT_STATUS].timeout_seconds
+            if "git" in enabled
+            else 0.0,
+            self._command_policies[CommandKind.CLASH_SECRET].timeout_seconds
+            if "clash" in enabled
+            else 0.0,
+            self._command_policies[CommandKind.CLASH_PROBE].timeout_seconds
+            if "clash" in enabled
+            else 0.0,
         )
         batch_result = await self._run_batch_executor(
             server.ssh_alias,
@@ -731,7 +836,9 @@ class DashboardRuntime:
         if batch_result.exit_code != 0 and not batch_result.stdout:
             if "git" in enabled:
                 self._git_last_poll_ok[server.server_id] = False
-                self._repo_last_poll_ok[server.server_id] = {repo_path: False for repo_path in server.working_dirs}
+                self._repo_last_poll_ok[server.server_id] = {
+                    repo_path: False for repo_path in server.working_dirs
+                }
                 for repo_path in server.working_dirs:
                     self._record_batch_failure(
                         server_id=server.server_id,
@@ -773,7 +880,9 @@ class DashboardRuntime:
             )
             if "git" in enabled:
                 self._git_last_poll_ok[server.server_id] = False
-                self._repo_last_poll_ok[server.server_id] = {repo_path: False for repo_path in server.working_dirs}
+                self._repo_last_poll_ok[server.server_id] = {
+                    repo_path: False for repo_path in server.working_dirs
+                }
                 for repo_path in server.working_dirs:
                     self._record_batch_failure(
                         server_id=server.server_id,
@@ -833,7 +942,9 @@ class DashboardRuntime:
                     successful_polls += 1
                 elif previous_repo := previous_by_path.get(repo_path):
                     repos.append(previous_repo)
-            self._git_last_poll_ok[server.server_id] = successful_polls == len(server.working_dirs)
+            self._git_last_poll_ok[server.server_id] = successful_polls == len(
+                server.working_dirs
+            )
             self._repo_last_poll_ok[server.server_id] = repo_poll_ok
             if successful_polls > 0 or len(previous_repos) == 0:
                 self._repo_cache[server.server_id] = repos
@@ -869,7 +980,10 @@ class DashboardRuntime:
                     self._clash_last_poll_ok[server.server_id] = True
                 else:
                     self._clash_last_poll_ok[server.server_id] = False
-            elif secret_execution.failure_class == "parse_error" and secret_execution.message == "secret-unavailable":
+            elif (
+                secret_execution.failure_class == "parse_error"
+                and secret_execution.message == "secret-unavailable"
+            ):
                 clash = dict(self._clash_cache.get(server.server_id, DEFAULT_CLASH))
                 clash["api_reachable"] = False
                 clash["ui_reachable"] = False
@@ -959,9 +1073,13 @@ class DashboardRuntime:
         settings = self.settings_store.load()
         server = _find_server(settings.servers, server_id)
         if repo_path not in server.working_dirs:
-            raise ValueError(f"repo '{repo_path}' is not configured for server '{server_id}'")
+            raise ValueError(
+                f"repo '{repo_path}' is not configured for server '{server_id}'"
+            )
 
-        command = _git_operation_command(repo_path=repo_path, operation=operation, branch=branch)
+        command = _git_operation_command(
+            repo_path=repo_path, operation=operation, branch=branch
+        )
 
         if operation == "refresh":
             operation_result = await self._run_batch_executor(
@@ -985,7 +1103,9 @@ class DashboardRuntime:
         operation_ok = operation_result.exit_code == 0 and not operation_result.error
         stderr_blob = operation_result.error or operation_result.stderr or ""
         if operation == "refresh" and status_result is not operation_result:
-            stderr_blob = stderr_blob or status_result.error or status_result.stderr or ""
+            stderr_blob = (
+                stderr_blob or status_result.error or status_result.stderr or ""
+            )
 
         if status_result.exit_code == 0 and not status_result.error:
             repo = parse_repo_status(
@@ -1012,33 +1132,53 @@ class DashboardRuntime:
         settings = self.settings_store.load()
         server = _find_server(settings.servers, server_id)
         if repo_path not in server.working_dirs:
-            raise ValueError(f"repo '{repo_path}' is not configured for server '{server_id}'")
+            raise ValueError(
+                f"repo '{repo_path}' is not configured for server '{server_id}'"
+            )
 
-        launched = self.terminal_launcher(ssh_alias=server.ssh_alias, repo_path=repo_path)
+        launched = self.terminal_launcher(
+            ssh_alias=server.ssh_alias, repo_path=repo_path
+        )
         return {
             "ok": bool(getattr(launched, "ok", False)),
             "launched_with": str(getattr(launched, "launched_with", "")),
             "detail": str(getattr(launched, "detail", "")),
         }
 
-    async def _run_executor(self, alias: str, remote_command: str, *, timeout_seconds: float):
+    async def _run_executor(
+        self, alias: str, remote_command: str, *, timeout_seconds: float
+    ):
         try:
-            return await self.executor.run(alias, remote_command, timeout_seconds=timeout_seconds)
+            return await self.executor.run(
+                alias, remote_command, timeout_seconds=timeout_seconds
+            )
         except TypeError:
             return await self.executor.run(alias, remote_command)
 
-    async def _run_batch_executor(self, alias: str, remote_command: str, *, timeout_seconds: float):
+    async def _run_batch_executor(
+        self, alias: str, remote_command: str, *, timeout_seconds: float
+    ):
         if self.batch_transport is not None and hasattr(self.batch_transport, "run"):
             try:
-                return await self.batch_transport.run(alias, remote_command, timeout_seconds=timeout_seconds)
+                return await self.batch_transport.run(
+                    alias, remote_command, timeout_seconds=timeout_seconds
+                )
             except Exception:
-                return await self._run_executor(alias, remote_command, timeout_seconds=timeout_seconds)
-        return await self._run_executor(alias, remote_command, timeout_seconds=timeout_seconds)
+                return await self._run_executor(
+                    alias, remote_command, timeout_seconds=timeout_seconds
+                )
+        return await self._run_executor(
+            alias, remote_command, timeout_seconds=timeout_seconds
+        )
 
-    async def _run_git_operation_command(self, alias: str, remote_command: str, *, timeout_seconds: float):
+    async def _run_git_operation_command(
+        self, alias: str, remote_command: str, *, timeout_seconds: float
+    ):
         if self.batch_transport is not None and hasattr(self.batch_transport, "run"):
             try:
-                return await self.batch_transport.run(alias, remote_command, timeout_seconds=timeout_seconds)
+                return await self.batch_transport.run(
+                    alias, remote_command, timeout_seconds=timeout_seconds
+                )
             except Exception as exc:
                 message = str(exc) or "persistent transport failed"
                 return SimpleNamespace(
@@ -1048,7 +1188,9 @@ class DashboardRuntime:
                     duration_ms=0,
                     error=message,
                 )
-        return await self._run_executor(alias, remote_command, timeout_seconds=timeout_seconds)
+        return await self._run_executor(
+            alias, remote_command, timeout_seconds=timeout_seconds
+        )
 
     async def _execute_with_policy(
         self,
@@ -1179,12 +1321,18 @@ class DashboardRuntime:
                 error=getattr(result, "error", None),
                 stderr=str(getattr(result, "stderr", "")),
             )
-            message = str(getattr(result, "error", "") or getattr(result, "stderr", "") or command_kind.value)
+            message = str(
+                getattr(result, "error", "")
+                or getattr(result, "stderr", "")
+                or command_kind.value
+            )
             if _is_ssh_unreachable(result):
                 had_host_unreachable = True
                 if not host_unreachable_message:
                     host_unreachable_message = message
-            if attempt < policy.max_attempts and _should_retry(policy=policy, failure_class=failure_class):
+            if attempt < policy.max_attempts and _should_retry(
+                policy=policy, failure_class=failure_class
+            ):
                 await asyncio.sleep(policy.base_backoff_seconds * attempt)
                 continue
 
@@ -1228,8 +1376,14 @@ class DashboardRuntime:
         policy: CommandPolicy,
         cache_used: bool,
     ) -> _PolicyExecutionOutcome:
-        failure_class = classify_failure(error=getattr(result, "error", None), stderr=getattr(result, "stderr", ""))
-        message = getattr(result, "error", None) or getattr(result, "stderr", "") or "batch failed"
+        failure_class = classify_failure(
+            error=getattr(result, "error", None), stderr=getattr(result, "stderr", "")
+        )
+        message = (
+            getattr(result, "error", None)
+            or getattr(result, "stderr", "")
+            or "batch failed"
+        )
         tracker = self._failure_tracker_for(
             server_id=server_id,
             command_kind=command_kind,
@@ -1302,7 +1456,9 @@ class DashboardRuntime:
             stdout=stdout_section.payload if stdout_section is not None else "",
             stderr=stderr_section.payload if stderr_section is not None else "",
             exit_code=stdout_section.exit_code if stdout_section is not None else -1,
-            duration_ms=stdout_section.duration_ms if stdout_section is not None else fallback_duration_ms,
+            duration_ms=stdout_section.duration_ms
+            if stdout_section is not None
+            else fallback_duration_ms,
             error=None,
         )
 
@@ -1392,13 +1548,17 @@ class DashboardRuntime:
             self._failure_trackers[key] = tracker
         return tracker
 
-    def _summarize_server_command_health(self, *, server: ServerSettings) -> dict[str, dict]:
+    def _summarize_server_command_health(
+        self, *, server: ServerSettings
+    ) -> dict[str, dict]:
         summaries: dict[str, dict] = {}
         for panel_name in server.enabled_panels:
             try:
                 if panel_name == "system":
                     if self.metrics_stream_manager is not None:
-                        summaries[panel_name] = self._summary_for_metrics_stream(server_id=server.server_id)
+                        summaries[panel_name] = self._summary_for_metrics_stream(
+                            server_id=server.server_id
+                        )
                     else:
                         summaries[panel_name] = self._summary_for_single_command(
                             server_id=server.server_id,
@@ -1408,7 +1568,9 @@ class DashboardRuntime:
                         )
                 elif panel_name == "gpu":
                     if self.metrics_stream_manager is not None:
-                        summaries[panel_name] = self._summary_for_metrics_stream(server_id=server.server_id)
+                        summaries[panel_name] = self._summary_for_metrics_stream(
+                            server_id=server.server_id
+                        )
                     else:
                         summaries[panel_name] = self._summary_for_single_command(
                             server_id=server.server_id,
@@ -1419,7 +1581,9 @@ class DashboardRuntime:
                 elif panel_name == "git":
                     summaries[panel_name] = self._summary_for_git(server=server)
                 elif panel_name == "clash":
-                    summaries[panel_name] = self._summary_for_clash(server_id=server.server_id)
+                    summaries[panel_name] = self._summary_for_clash(
+                        server_id=server.server_id
+                    )
             except Exception:
                 summaries[panel_name] = _unknown_command_health_summary()
         return summaries
@@ -1435,7 +1599,9 @@ class DashboardRuntime:
                 "state": "healthy",
                 "label": f"{latency_ms}ms" if latency_ms is not None else "--",
                 "latency_ms": latency_ms,
-                "detail": "Metrics stream transport latency" if latency_ms is not None else "Metrics stream active",
+                "detail": "Metrics stream transport latency"
+                if latency_ms is not None
+                else "Metrics stream active",
                 "updated_at": stream_status.last_sample_received_at,
             }
         if stream_status.state == "reconnecting":
@@ -1444,7 +1610,8 @@ class DashboardRuntime:
                 "label": "reconnecting",
                 "latency_ms": None,
                 "detail": "Metrics stream reconnecting",
-                "updated_at": stream_status.state_changed_at or stream_status.last_sample_received_at,
+                "updated_at": stream_status.state_changed_at
+                or stream_status.last_sample_received_at,
             }
         if stream_status.state == "connecting":
             return {
@@ -1460,7 +1627,8 @@ class DashboardRuntime:
                 "label": "stopped",
                 "latency_ms": None,
                 "detail": "Metrics stream stopped",
-                "updated_at": stream_status.state_changed_at or stream_status.last_sample_received_at,
+                "updated_at": stream_status.state_changed_at
+                or stream_status.last_sample_received_at,
             }
         return _unknown_command_health_summary()
 
@@ -1495,22 +1663,33 @@ class DashboardRuntime:
         if not records:
             return _unknown_command_health_summary()
 
-        state = _worst_command_health_state(_command_health_state_from_record(record) for record in records)
+        state = _worst_command_health_state(
+            _command_health_state_from_record(record) for record in records
+        )
         if state == "healthy":
             latency_ms = max(record.duration_ms for record in records)
             updated_at = max(record.recorded_at for record in records)
             return {
                 "state": state,
-                "label": _command_health_label(state=state, latency_ms=latency_ms, attempt_count=1),
+                "label": _command_health_label(
+                    state=state, latency_ms=latency_ms, attempt_count=1
+                ),
                 "latency_ms": latency_ms,
                 "detail": "All repos healthy",
                 "updated_at": updated_at,
             }
 
-        matching_records = [record for record in records if _command_health_state_from_record(record) == state]
+        matching_records = [
+            record
+            for record in records
+            if _command_health_state_from_record(record) == state
+        ]
         worst_record = max(
             matching_records,
-            key=lambda record: (_command_health_severity(_command_health_state_from_record(record)), record.duration_ms),
+            key=lambda record: (
+                _command_health_severity(_command_health_state_from_record(record)),
+                record.duration_ms,
+            ),
         )
         return {
             "state": state,
@@ -1540,11 +1719,17 @@ class DashboardRuntime:
         probe_state = _command_health_state_from_record(probe_record)
 
         if secret_state in {"failed", "cooldown", "retrying"}:
-            return _command_health_summary_from_record(secret_record, default_detail="Secret check failed")
+            return _command_health_summary_from_record(
+                secret_record, default_detail="Secret check failed"
+            )
         if probe_record is not None:
-            return _command_health_summary_from_record(probe_record, default_detail="Last probe succeeded")
+            return _command_health_summary_from_record(
+                probe_record, default_detail="Last probe succeeded"
+            )
         if secret_record is not None:
-            return _command_health_summary_from_record(secret_record, default_detail="Last secret check succeeded")
+            return _command_health_summary_from_record(
+                secret_record, default_detail="Last secret check succeeded"
+            )
         if secret_state == "unknown" and probe_state == "unknown":
             return _unknown_command_health_summary()
         return _unknown_command_health_summary()
@@ -1556,7 +1741,9 @@ class DashboardRuntime:
         command_kind: CommandKind,
         target_label: str,
     ) -> CommandHealthRecord | None:
-        records = self._recent_command_health.get((server_id, command_kind.value, target_label), [])
+        records = self._recent_command_health.get(
+            (server_id, command_kind.value, target_label), []
+        )
         if not records:
             return None
         return records[-1]
@@ -1569,7 +1756,11 @@ class DashboardRuntime:
         target_label: str | None = None,
     ) -> list[dict]:
         matching: list[dict] = []
-        for (record_server_id, record_command_kind, record_target_label), records in self._recent_command_health.items():
+        for (
+            record_server_id,
+            record_command_kind,
+            record_target_label,
+        ), records in self._recent_command_health.items():
             if record_server_id != server_id:
                 continue
             if command_kind is not None and record_command_kind != command_kind:
@@ -1583,8 +1774,12 @@ class DashboardRuntime:
         settings = self.settings_store.load()
         servers: dict[str, dict] = {}
 
-        for (server_id, command_kind, target_label), records in sorted(self._recent_command_health.items()):
-            server_entry = servers.setdefault(server_id, {"server_id": server_id, "commands": []})
+        for (server_id, command_kind, target_label), records in sorted(
+            self._recent_command_health.items()
+        ):
+            server_entry = servers.setdefault(
+                server_id, {"server_id": server_id, "commands": []}
+            )
             recent_outcomes = [
                 {
                     "recorded_at": record.recorded_at,
@@ -1605,8 +1800,15 @@ class DashboardRuntime:
             ]
             success_count = sum(1 for record in records if record.ok)
             failure_count = len(records) - success_count
-            avg_duration_ms = int(sum(record.duration_ms for record in records) / len(records)) if records else 0
-            last_failure_class = next((record.failure_class for record in reversed(records) if not record.ok), "ok")
+            avg_duration_ms = (
+                int(sum(record.duration_ms for record in records) / len(records))
+                if records
+                else 0
+            )
+            last_failure_class = next(
+                (record.failure_class for record in reversed(records) if not record.ok),
+                "ok",
+            )
             server_entry["commands"].append(
                 {
                     "command_kind": command_kind,
@@ -1622,8 +1824,12 @@ class DashboardRuntime:
             )
 
         for server_id, stream_status in sorted(self._metrics_stream_status.items()):
-            server_entry = servers.setdefault(server_id, {"server_id": server_id, "commands": []})
-            server_entry["metrics_stream"] = self._serialize_metrics_stream_status(server_id)
+            server_entry = servers.setdefault(
+                server_id, {"server_id": server_id, "commands": []}
+            )
+            server_entry["metrics_stream"] = self._serialize_metrics_stream_status(
+                server_id
+            )
 
         return {
             "generated_at": datetime.now(UTC).isoformat(),
@@ -1666,520 +1872,3 @@ class DashboardRuntime:
         if not replaced:
             updated.append(repo)
         self._repo_cache[server_id] = updated
-
-
-def _needs_status_poll(*, last: datetime | None, now: datetime, interval_seconds: float) -> bool:
-    if last is None:
-        return True
-    return (now - last).total_seconds() >= interval_seconds
-
-
-def _metrics_sleep_seconds(*, interval_seconds: float, elapsed_seconds: float) -> float:
-    target_interval_seconds = max(0.5, interval_seconds)
-    # Keep loop cadence close to the configured interval while avoiding tight loops.
-    return max(0.05, target_interval_seconds - elapsed_seconds)
-
-
-def _unknown_command_health_summary() -> dict:
-    return {
-        "state": "unknown",
-        "label": "--",
-        "latency_ms": None,
-        "detail": "No command history yet",
-        "updated_at": None,
-    }
-
-
-def _command_health_summary_from_record(record: CommandHealthRecord | None, *, default_detail: str) -> dict:
-    if record is None:
-        return _unknown_command_health_summary()
-
-    state = _command_health_state_from_record(record)
-    detail = default_detail
-    if state == "retrying":
-        detail = f"Last poll succeeded after {record.attempt_count} attempts"
-    elif state == "cooldown":
-        detail = "Command cooling down after repeated failures"
-    elif state == "failed":
-        detail = record.message or "Last poll failed"
-
-    return {
-        "state": state,
-        "label": _command_health_label(state=state, latency_ms=record.duration_ms, attempt_count=record.attempt_count),
-        "latency_ms": record.duration_ms,
-        "detail": detail,
-        "updated_at": record.recorded_at,
-    }
-
-
-def _command_health_state_from_record(record: CommandHealthRecord | None) -> str:
-    if record is None:
-        return "unknown"
-    if record.ok and record.attempt_count > 1:
-        return "retrying"
-    if record.ok:
-        return "healthy"
-    if record.failure_class == "cooldown_skip":
-        return "cooldown"
-    return "failed"
-
-
-def _command_health_label(*, state: str, latency_ms: int | None, attempt_count: int) -> str:
-    if state == "healthy":
-        return f"{latency_ms}ms" if latency_ms is not None else "--"
-    if state == "retrying":
-        return f"retry x{max(attempt_count, 2)}"
-    if state == "cooldown":
-        return "cooldown"
-    if state == "failed":
-        return "failed"
-    return "--"
-
-
-def _command_health_severity(state: str) -> int:
-    return {
-        "unknown": 0,
-        "healthy": 1,
-        "retrying": 2,
-        "cooldown": 3,
-        "failed": 4,
-    }.get(state, 0)
-
-
-def _worst_command_health_state(states) -> str:
-    state_list = list(states)
-    if not state_list:
-        return "unknown"
-    return max(state_list, key=_command_health_severity)
-
-
-def _git_command_health_detail(state: str) -> str:
-    if state == "healthy":
-        return "All repos healthy"
-    if state == "retrying":
-        return "One or more repos required retries"
-    if state == "cooldown":
-        return "One or more repos are cooling down"
-    if state == "failed":
-        return "One or more repos failed"
-    return "No repo health history yet"
-
-
-def _find_server(servers: list[ServerSettings], server_id: str) -> ServerSettings:
-    for server in servers:
-        if server.server_id == server_id:
-            return server
-    raise KeyError(f"unknown server '{server_id}'")
-
-
-def _serialize_runtime_settings(settings) -> dict:
-    return {
-        "metrics_interval_seconds": settings.metrics_interval_seconds,
-        "status_interval_seconds": settings.status_interval_seconds,
-        "servers": [
-            {
-                "server_id": server.server_id,
-                "ssh_alias": server.ssh_alias,
-                "working_dirs": list(server.working_dirs),
-                "enabled_panels": list(server.enabled_panels),
-                "clash_api_probe_url": server.clash_api_probe_url,
-                "clash_ui_probe_url": server.clash_ui_probe_url,
-            }
-            for server in settings.servers
-        ],
-    }
-
-
-def _is_ssh_unreachable(result) -> bool:
-    blob = f"{result.error or ''} {result.stderr or ''}".lower()
-    return any(
-        token in blob
-        for token in [
-            "timeout",
-            "timed out",
-            "could not resolve hostname",
-            "connection refused",
-            "network is unreachable",
-            "no route to host",
-        ]
-    )
-
-
-def _shell_quote(value: str) -> str:
-    return "'" + value.replace("'", "'\"'\"'") + "'"
-
-
-def _group_batch_sections(sections) -> dict[tuple[str, str], dict[str, object]]:
-    grouped: dict[tuple[str, str], dict[str, object]] = {}
-    for section in sections:
-        grouped.setdefault((section.kind, section.target), {})[section.stream] = section
-    return grouped
-
-
-def _empty_repo_status(path: str) -> dict[str, str | int | bool | None]:
-    return {
-        "path": path,
-        "branch": "unknown",
-        "dirty": False,
-        "ahead": 0,
-        "behind": 0,
-        "staged": 0,
-        "unstaged": 0,
-        "untracked": 0,
-        "last_commit_age_seconds": 0,
-        "last_updated_at": None,
-    }
-
-
-def _empty_system_snapshot() -> dict[str, float]:
-    return {
-        "cpu_percent": 0.0,
-        "memory_percent": 0.0,
-        "disk_percent": 0.0,
-        "network_rx_kbps": 0.0,
-        "network_tx_kbps": 0.0,
-    }
-
-
-def _system_command() -> str:
-    return (
-        "CPU=$(top -bn1 | awk '/Cpu\\(s\\)/ {print 100-$8; exit}'); "
-        "MEM=$(free | awk '/Mem:/ {printf \"%.2f\", ($3/$2)*100}'); "
-        "DISK=$(df -P / | awk 'NR==2 {gsub(/%/,\"\",$5); print $5}'); "
-        "echo \"CPU: ${CPU:-0}\"; "
-        "echo \"MEM: ${MEM:-0}\"; "
-        "echo \"DISK: ${DISK:-0}\"; "
-        "echo \"RX_KBPS: 0\"; "
-        "echo \"TX_KBPS: 0\""
-    )
-
-
-def _gpu_command() -> str:
-    return "nvidia-smi --query-gpu=index,name,utilization.gpu,memory.used,memory.total,temperature.gpu --format=csv,noheader,nounits"
-
-
-def _git_status_command(repo: str) -> str:
-    return f"git -C {_shell_quote(repo)} status --porcelain --branch"
-
-
-SAFE_BRANCH_RE = re.compile(r"^[A-Za-z0-9._/-]+$")
-
-
-def _git_operation_command(*, repo_path: str, operation: str, branch: str | None) -> str:
-    quoted_repo = _shell_quote(repo_path)
-
-    if operation == "refresh":
-        return _git_status_command(repo_path)
-    if operation == "fetch":
-        return f"git -C {quoted_repo} fetch --prune --tags"
-    if operation == "pull":
-        return f"git -C {quoted_repo} pull --ff-only"
-    if operation == "checkout":
-        if branch is None or branch.strip() == "":
-            raise ValueError("branch is required for checkout")
-        normalized_branch = branch.strip()
-        if not _is_valid_branch_name(normalized_branch):
-            raise ValueError("invalid branch name")
-        return f"git -C {quoted_repo} checkout {_shell_quote(normalized_branch)}"
-    raise ValueError(f"unsupported operation '{operation}'")
-
-
-def _is_valid_branch_name(branch: str) -> bool:
-    if not SAFE_BRANCH_RE.fullmatch(branch):
-        return False
-    if branch.startswith("-"):
-        return False
-    if ".." in branch or "@{" in branch:
-        return False
-    return True
-
-
-def _should_retry(*, policy: CommandPolicy, failure_class: str) -> bool:
-    if failure_class == "timeout":
-        return policy.retry_on_timeout
-    if failure_class == "ssh_unreachable":
-        return policy.retry_on_ssh_error
-    if failure_class == "nonzero_exit":
-        return policy.retry_on_nonzero_exit
-    return False
-
-
-def _build_freshness_entry(
-    *,
-    now: datetime,
-    last_updated_at: str | None,
-    last_poll_ok: bool | None,
-    threshold_seconds: float,
-    keep_live_while_inflight: bool = False,
-) -> dict[str, str | int | float | None]:
-    age_seconds = _age_seconds_from_iso(now=now, timestamp_iso=last_updated_at)
-    normalized_threshold = float(max(1.0, threshold_seconds))
-
-    if last_poll_ok is False:
-        state = "cached"
-        reason = "poll_error"
-    elif age_seconds is None:
-        state = "cached"
-        reason = "no_data"
-    elif age_seconds > normalized_threshold:
-        if keep_live_while_inflight:
-            state = "live"
-            reason = "poll_inflight"
-        else:
-            state = "cached"
-            reason = "age_expired"
-    else:
-        state = "live"
-        reason = "ok"
-
-    return {
-        "state": state,
-        "reason": reason,
-        "last_updated_at": last_updated_at,
-        "age_seconds": age_seconds if age_seconds is not None else 0,
-        "threshold_seconds": normalized_threshold,
-    }
-
-
-def _age_seconds_from_iso(*, now: datetime, timestamp_iso: str | None) -> int | None:
-    if not timestamp_iso:
-        return None
-    try:
-        parsed = datetime.fromisoformat(timestamp_iso)
-    except ValueError:
-        return None
-    return max(0, int((now - parsed).total_seconds()))
-
-
-def _metrics_stream_transport_latency_ms(
-    *,
-    sample_server_time: str | None,
-    received_at: datetime,
-    sample_interval_ms: int | None = None,
-) -> int | None:
-    if not sample_server_time:
-        return None
-    try:
-        parsed = datetime.fromisoformat(sample_server_time)
-    except ValueError:
-        return None
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=UTC)
-    latency_ms = int((received_at - parsed).total_seconds() * 1000)
-    if latency_ms < 0:
-        return None
-    max_latency_ms = _metrics_stream_latency_upper_bound_ms(sample_interval_ms)
-    if latency_ms > max_latency_ms:
-        return None
-    return latency_ms
-
-
-def _metrics_stream_latency_upper_bound_ms(sample_interval_ms: int | None) -> int:
-    floor_ms = 5000
-    multiplier = 20
-    if sample_interval_ms is None:
-        return floor_ms
-    try:
-        interval_ms = int(sample_interval_ms)
-    except (TypeError, ValueError):
-        return floor_ms
-    if interval_ms <= 0:
-        return floor_ms
-    return max(floor_ms, interval_ms * multiplier)
-
-
-def _extract_clash_secret(output: str) -> str | None:
-    if not output:
-        return None
-    ansi_cleaned = re.sub(r"\x1b\[[0-9;]*m", "", output)
-    patterns = [
-        r"当前密钥\s*[:：]\s*(\S+)",
-        r"current\s+secret\s*[:：]\s*(\S+)",
-        r"secret\s*[:：]\s*(\S+)",
-    ]
-    for raw_line in ansi_cleaned.splitlines():
-        line = raw_line.strip()
-        if not line:
-            continue
-        for pattern in patterns:
-            match = re.search(pattern, line, flags=re.IGNORECASE)
-            if match:
-                secret = match.group(1).strip().strip("'\"")
-                if secret:
-                    return secret
-    return None
-
-
-def _parse_required_clash_secret(output: str) -> str:
-    secret = _extract_clash_secret(output)
-    if secret:
-        return secret
-    raise ValueError("secret-unavailable")
-
-
-def _batched_clash_secret_command() -> str:
-    secret_command = _clash_secret_command()
-    return (
-        "__sm_secret_out=$(mktemp); "
-        "__sm_secret_err=$(mktemp); "
-        f"sh -lc {_shell_quote(secret_command)} >\"$__sm_secret_out\" 2>\"$__sm_secret_err\"; "
-        "__sm_secret_exit=$?; "
-        "cat \"$__sm_secret_out\"; "
-        "cat \"$__sm_secret_err\" >&2; "
-        "if [ \"$__sm_secret_exit\" -eq 0 ]; then "
-        "__sm_clash_secret=$(sed -nE "
-        "\"s/.*当前密钥[[:space:]]*[:：][[:space:]]*([^[:space:]]+).*/\\1/p; "
-        "s/.*[Cc]urrent[[:space:]]+[Ss]ecret[[:space:]]*[:：][[:space:]]*([^[:space:]]+).*/\\1/p; "
-        "s/.*[Ss]ecret[[:space:]]*[:：][[:space:]]*([^[:space:]]+).*/\\1/p\" "
-        "\"$__sm_secret_out\" | head -n1 | tr -d '\\r' | tr -d '\"' | tr -d \"'\" | xargs); "
-        "else __sm_clash_secret=''; fi; "
-        "rm -f \"$__sm_secret_out\" \"$__sm_secret_err\"; "
-        "[ \"$__sm_secret_exit\" -eq 0 ]"
-    )
-
-
-def _clash_secret_command() -> str:
-    return (
-        "if command -v clashsecret >/dev/null 2>&1; then "
-        "clashsecret; "
-        "elif command -v clashctl >/dev/null 2>&1; then "
-        "clashctl secret; "
-        "else "
-        "for CANDIDATE in "
-        "$HOME/clashctl/resources/runtime.yaml "
-        "$HOME/clash-for-linux-install/resources/runtime.yaml "
-        "; do "
-        "if [ -r \"$CANDIDATE\" ]; then "
-        "SECRET=$(sed -n 's/^secret:[[:space:]]*//p' \"$CANDIDATE\" | head -n1 | tr -d '\\r' | xargs); "
-        "if [ -n \"$SECRET\" ]; then echo \"当前密钥：$SECRET\"; exit 0; fi; "
-        "fi; "
-        "done; "
-        "echo 'secret-unavailable' >&2; "
-        "exit 1; "
-        "fi"
-    )
-
-
-def _batched_clash_probe_command(
-    *,
-    api_probe_url: str = "http://127.0.0.1:9090/version",
-    ui_probe_url: str = "http://127.0.0.1:9090/ui",
-) -> str:
-    api_url = _shell_quote(api_probe_url)
-    ui_url = _shell_quote(ui_probe_url)
-    return (
-        "if [ -z \"$__sm_clash_secret\" ]; then "
-        "echo 'secret-unavailable' >&2; "
-        "exit 1; "
-        "fi; "
-        "AUTH_HEADER=\"Authorization: Bearer $__sm_clash_secret\"; "
-        f"API_URL={api_url}; "
-        f"UI_URL={ui_url}; "
-        "if pgrep -f clash >/dev/null; then echo running=true; else echo running=false; fi; "
-        "if command -v curl >/dev/null 2>&1; then "
-        "API_CODE=$(curl -sS -o /dev/null -w '%{http_code}' --connect-timeout 1 --max-time 2 -H \"$AUTH_HEADER\" \"$API_URL\" || echo 000); "
-        "UI_CODE=$(curl -sS -o /dev/null -w '%{http_code}' --connect-timeout 1 --max-time 2 -H \"$AUTH_HEADER\" \"$UI_URL\" || echo 000); "
-        "if [ \"$API_CODE\" -ge 200 ] && [ \"$API_CODE\" -lt 400 ]; then echo api_reachable=true; else echo api_reachable=false; fi; "
-        "if [ \"$UI_CODE\" -ge 200 ] && [ \"$UI_CODE\" -lt 400 ]; then echo ui_reachable=true; else echo ui_reachable=false; fi; "
-        "if [ \"$API_CODE\" -ge 200 ] && [ \"$API_CODE\" -lt 400 ] && [ \"$UI_CODE\" -ge 200 ] && [ \"$UI_CODE\" -lt 400 ]; then echo message=ok; else echo message=probe-error; fi; "
-        "CTRL_PORT=unknown; "
-        "PROXY_URL=; "
-        "for CANDIDATE in "
-        "$HOME/clashctl/resources/runtime.yaml "
-        "$HOME/clash-for-linux-install/resources/runtime.yaml "
-        "; do "
-        "if [ -r \"$CANDIDATE\" ]; then "
-        "CTRL_LINE=$(grep -m1 '^external-controller:' \"$CANDIDATE\" | cut -d: -f2- | tr -d '\"' | tr -d \"'\" | tr -d '\\r' | xargs); "
-        "if [ -n \"$CTRL_LINE\" ]; then "
-        "CTRL_PORT=$(printf '%s' \"$CTRL_LINE\" | awk -F: '{print $NF}' | tr -d '\\r' | xargs); "
-        "fi; "
-        "PROXY_PORT=$(grep -m1 '^mixed-port:' \"$CANDIDATE\" | cut -d: -f2- | tr -d '\\r' | xargs); "
-        "if [ -z \"$PROXY_PORT\" ]; then "
-        "PROXY_PORT=$(grep -m1 '^port:' \"$CANDIDATE\" | cut -d: -f2- | tr -d '\\r' | xargs); "
-        "fi; "
-        "if [ -n \"$PROXY_PORT\" ]; then PROXY_URL=\"http://127.0.0.1:$PROXY_PORT\"; fi; "
-        "if [ -n \"$CTRL_PORT\" ] && [ -n \"$PROXY_URL\" ]; then break; fi; "
-        "fi; "
-        "done; "
-        "if [ -n \"$PROXY_URL\" ] && command -v curl >/dev/null 2>&1; then "
-        "IP_LOCATION=$(curl -sS --proxy \"$PROXY_URL\" --connect-timeout 2 --max-time 4 https://speed.cloudflare.com/meta 2>/dev/null | tr -d '\\r' | awk -F'\"city\"|\"region\"|\"country\"|\"ip\"' 'NF>1 {print $0}' | sed -n "
-        "\"s/.*\\\"city\\\":\\\"\\([^\\\"]*\\)\\\".*\\\"region\\\":\\\"\\([^\\\"]*\\)\\\".*\\\"country\\\":\\\"\\([^\\\"]*\\)\\\".*\\\"ip\\\":\\\"\\([^\\\"]*\\)\\\".*/\\1, \\2, \\3 (\\4)/p\"); "
-        "if [ -n \"$IP_LOCATION\" ]; then echo \"ip_location=$IP_LOCATION\"; else echo ip_location=unknown; fi; "
-        "else "
-        "echo ip_location=unknown; "
-        "fi; "
-        "echo controller_port=$CTRL_PORT; "
-        "else "
-        "echo api_reachable=false; "
-        "echo ui_reachable=false; "
-        "echo message=curl-missing; "
-        "echo ip_location=unknown; "
-        "echo controller_port=unknown; "
-        "fi"
-    )
-
-
-def _clash_command(
-    api_probe_url: str = "http://127.0.0.1:9090/version",
-    ui_probe_url: str = "http://127.0.0.1:9090/ui",
-    secret: str = "",
-) -> str:
-    auth_header = _shell_quote(f"Authorization: Bearer {secret}")
-    api_url = _shell_quote(api_probe_url)
-    ui_url = _shell_quote(ui_probe_url)
-    return (
-        "if pgrep -f clash >/dev/null; then echo running=true; else echo running=false; fi; "
-        f"AUTH_HEADER={auth_header}; "
-        f"API_URL={api_url}; "
-        f"UI_URL={ui_url}; "
-        "if command -v curl >/dev/null 2>&1; then "
-        "API_CODE=$(curl -sS -o /dev/null -w '%{http_code}' --connect-timeout 1 --max-time 2 -H \"$AUTH_HEADER\" \"$API_URL\" || echo 000); "
-        "UI_CODE=$(curl -sS -o /dev/null -w '%{http_code}' --connect-timeout 1 --max-time 2 -H \"$AUTH_HEADER\" \"$UI_URL\" || echo 000); "
-        "if [ \"$API_CODE\" -ge 200 ] && [ \"$API_CODE\" -lt 400 ]; then echo api_reachable=true; else echo api_reachable=false; fi; "
-        "if [ \"$UI_CODE\" -ge 200 ] && [ \"$UI_CODE\" -lt 400 ]; then echo ui_reachable=true; else echo ui_reachable=false; fi; "
-        "if [ \"$API_CODE\" -ge 200 ] && [ \"$API_CODE\" -lt 400 ] && [ \"$UI_CODE\" -ge 200 ] && [ \"$UI_CODE\" -lt 400 ]; then echo message=ok; else echo message=probe-error; fi; "
-        "CTRL_PORT=unknown; "
-        "PROXY_URL=; "
-        "for CANDIDATE in "
-        "$HOME/clashctl/resources/runtime.yaml "
-        "$HOME/clash-for-linux-install/resources/runtime.yaml "
-        "; do "
-        "if [ -r \"$CANDIDATE\" ]; then "
-        "CTRL_LINE=$(grep -m1 '^external-controller:' \"$CANDIDATE\" | cut -d: -f2- | tr -d '\"' | tr -d \"'\" | tr -d '\\r' | xargs); "
-        "if [ -n \"$CTRL_LINE\" ]; then "
-        "CTRL_PORT=$(printf '%s' \"$CTRL_LINE\" | awk -F: '{print $NF}' | tr -d '\\r' | xargs); "
-        "fi; "
-        "PROXY_PORT=$(grep -m1 '^mixed-port:' \"$CANDIDATE\" | cut -d: -f2- | tr -d '\\r' | xargs); "
-        "if [ -z \"$PROXY_PORT\" ]; then "
-        "PROXY_PORT=$(grep -m1 '^port:' \"$CANDIDATE\" | cut -d: -f2- | tr -d '\\r' | xargs); "
-        "fi; "
-        "if [ -n \"$PROXY_PORT\" ]; then PROXY_URL=\"http://127.0.0.1:$PROXY_PORT\"; fi; "
-        "if [ -n \"$CTRL_PORT\" ] && [ -n \"$PROXY_URL\" ]; then break; fi; "
-        "fi; "
-        "done; "
-        "IP_LOCATION=unknown; "
-        "if [ -n \"$PROXY_URL\" ]; then "
-        "IP_INFO=$(curl -sS --proxy \"$PROXY_URL\" --connect-timeout 1 --max-time 2 'http://ip-api.com/line/?fields=query,country,regionName,city' || true); "
-        "else "
-        "IP_INFO=$(curl -sS --connect-timeout 1 --max-time 2 'http://ip-api.com/line/?fields=query,country,regionName,city' || true); "
-        "fi; "
-        "IP_COUNTRY=$(printf '%s\\n' \"$IP_INFO\" | sed -n '1p' | tr -d '\\r'); "
-        "IP_REGION=$(printf '%s\\n' \"$IP_INFO\" | sed -n '2p' | tr -d '\\r'); "
-        "IP_CITY=$(printf '%s\\n' \"$IP_INFO\" | sed -n '3p' | tr -d '\\r'); "
-        "IP_ADDR=$(printf '%s\\n' \"$IP_INFO\" | sed -n '4p' | tr -d '\\r'); "
-        "if [ -n \"$IP_ADDR$IP_COUNTRY$IP_REGION$IP_CITY\" ] && [ \"$IP_ADDR\" != \"fail\" ]; then "
-        "IP_LOCATION=\"$IP_CITY\"; "
-        "if [ -n \"$IP_REGION\" ]; then IP_LOCATION=\"${IP_LOCATION}, ${IP_REGION}\"; fi; "
-        "if [ -n \"$IP_COUNTRY\" ]; then IP_LOCATION=\"${IP_LOCATION}, ${IP_COUNTRY}\"; fi; "
-        "if [ -n \"$IP_ADDR\" ]; then IP_LOCATION=\"${IP_LOCATION} (${IP_ADDR})\"; fi; "
-        "IP_LOCATION=$(printf '%s' \"$IP_LOCATION\" | sed 's/^, //; s/^ *//; s/ *$//'); "
-        "fi; "
-        "echo ip_location=$IP_LOCATION; "
-        "else "
-        "echo api_reachable=false; "
-        "echo ui_reachable=false; "
-        "echo message=curl-missing; "
-        "echo ip_location=unknown; "
-        "fi; "
-        "echo controller_port=$CTRL_PORT"
-    )
