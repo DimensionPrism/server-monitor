@@ -10,7 +10,7 @@ if TYPE_CHECKING:
     from server_monitor.dashboard.runtime import DashboardRuntime
 
 from server_monitor.dashboard.health.command_policy import CommandKind
-from server_monitor.dashboard.parsers.git_status import parse_repo_status
+from server_monitor.dashboard.panels.parsers.git_status import parse_repo_status
 from server_monitor.dashboard.runtime.runtime_helpers import (
     _git_status_command,
 )

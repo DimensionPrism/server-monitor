@@ -8,7 +8,7 @@ def _load(name: str) -> str:
 
 
 def test_parse_nvidia_smi_fixture():
-    from server_monitor.dashboard.parsers.gpu import parse_gpu_snapshot
+    from server_monitor.dashboard.panels.parsers.gpu import parse_gpu_snapshot
 
     parsed = parse_gpu_snapshot(_load("nvidia_smi_query.txt"))
 
@@ -20,7 +20,7 @@ def test_parse_nvidia_smi_fixture():
 
 
 def test_parse_nvidia_smi_jetson_na_values_defaults_to_zero():
-    from server_monitor.dashboard.parsers.gpu import parse_gpu_snapshot
+    from server_monitor.dashboard.panels.parsers.gpu import parse_gpu_snapshot
 
     parsed = parse_gpu_snapshot("0, Orin (nvgpu), [N/A], [N/A], [N/A], [N/A]")
 
@@ -38,7 +38,7 @@ def test_parse_nvidia_smi_jetson_na_values_defaults_to_zero():
 
 
 def test_parse_nvidia_smi_unexpected_non_numeric_value_raises():
-    from server_monitor.dashboard.parsers.gpu import parse_gpu_snapshot
+    from server_monitor.dashboard.panels.parsers.gpu import parse_gpu_snapshot
 
     with pytest.raises(ValueError):
         parse_gpu_snapshot("0, Orin (nvgpu), bad-value, 123, 456, 50")

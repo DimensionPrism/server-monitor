@@ -6,7 +6,7 @@ def _load(name: str) -> str:
 
 
 def test_parse_clash_status_fixture():
-    from server_monitor.dashboard.parsers.clash import parse_clash_status
+    from server_monitor.dashboard.panels.parsers.clash import parse_clash_status
 
     parsed = parse_clash_status(_load("clash_status.txt"))
 
@@ -17,7 +17,7 @@ def test_parse_clash_status_fixture():
 
 
 def test_parse_clash_status_reads_ip_location_when_present():
-    from server_monitor.dashboard.parsers.clash import parse_clash_status
+    from server_monitor.dashboard.panels.parsers.clash import parse_clash_status
 
     parsed = parse_clash_status(
         "running=true\n"
@@ -31,7 +31,7 @@ def test_parse_clash_status_reads_ip_location_when_present():
 
 
 def test_parse_clash_status_reads_controller_port_when_present():
-    from server_monitor.dashboard.parsers.clash import parse_clash_status
+    from server_monitor.dashboard.panels.parsers.clash import parse_clash_status
 
     parsed = parse_clash_status(
         "running=true\n"

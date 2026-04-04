@@ -6,7 +6,7 @@ def _load(name: str) -> str:
 
 
 def test_parse_system_snapshot_fixture():
-    from server_monitor.dashboard.parsers.system import parse_system_snapshot
+    from server_monitor.dashboard.panels.parsers.system import parse_system_snapshot
 
     parsed = parse_system_snapshot(_load("system_snapshot.txt"))
 
