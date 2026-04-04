@@ -10,9 +10,13 @@ from server_monitor.dashboard.api import create_dashboard_app
 from server_monitor.dashboard.clash_tunnel import ClashTunnelManager
 from server_monitor.dashboard.metrics_stream_manager import MetricsStreamManager
 from server_monitor.dashboard.normalize import normalize_server_payload
-from server_monitor.dashboard.persistent_session import PersistentBatchTransport
+from server_monitor.dashboard.ssh import PersistentBatchTransport
 from server_monitor.dashboard.runtime import DashboardRuntime, SshCommandExecutor
-from server_monitor.dashboard.settings import DashboardSettings, DashboardSettingsStore, ServerSettings
+from server_monitor.dashboard.settings import (
+    DashboardSettings,
+    DashboardSettingsStore,
+    ServerSettings,
+)
 from server_monitor.dashboard.ws_hub import WebSocketHub
 
 
@@ -61,7 +65,9 @@ def _build_settings_store() -> DashboardSettingsStore:
                 DashboardSettings(
                     servers=[
                         ServerSettings(
-                            server_id=os.getenv("SERVER_MONITOR_FALLBACK_SERVER_ID", "server-a"),
+                            server_id=os.getenv(
+                                "SERVER_MONITOR_FALLBACK_SERVER_ID", "server-a"
+                            ),
                             ssh_alias=fallback_alias,
                         )
                     ]
@@ -70,7 +76,9 @@ def _build_settings_store() -> DashboardSettingsStore:
     return store
 
 
-def _build_runtime(hub: WebSocketHub, settings_store: DashboardSettingsStore) -> DashboardRuntime:
+def _build_runtime(
+    hub: WebSocketHub, settings_store: DashboardSettingsStore
+) -> DashboardRuntime:
     return DashboardRuntime(
         hub=hub,
         settings_store=settings_store,

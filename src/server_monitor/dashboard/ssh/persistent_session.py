@@ -8,7 +8,7 @@ import re
 import time
 import uuid
 
-from server_monitor.dashboard.command_runner import CommandResult
+from server_monitor.dashboard.ssh.command_runner import CommandResult
 
 
 _DONE_RE = re.compile(r"^__SM_DONE__ ([a-f0-9]+) (-?\d+)\r?\n?$")
@@ -30,7 +30,9 @@ class PersistentBatchTransport:
         self._sessions: dict[str, _PersistentBatchSession] = {}
         self._alias_locks: dict[str, asyncio.Lock] = {}
 
-    async def run(self, alias: str, remote_command: str, *, timeout_seconds: float) -> CommandResult:
+    async def run(
+        self, alias: str, remote_command: str, *, timeout_seconds: float
+    ) -> CommandResult:
         lock = self._alias_locks.setdefault(alias, asyncio.Lock())
         async with lock:
             session = self._sessions.get(alias)
@@ -39,7 +41,9 @@ class PersistentBatchTransport:
                 self._sessions[alias] = session
 
             try:
-                return await session.run(remote_command, timeout_seconds=timeout_seconds)
+                return await session.run(
+                    remote_command, timeout_seconds=timeout_seconds
+                )
             except Exception:
                 await self._discard_session(alias)
                 raise
@@ -60,7 +64,9 @@ class _PersistentBatchSession:
     def __init__(self, process) -> None:
         self._process = process
 
-    async def run(self, remote_command: str, *, timeout_seconds: float) -> CommandResult:
+    async def run(
+        self, remote_command: str, *, timeout_seconds: float
+    ) -> CommandResult:
         request_id = uuid.uuid4().hex
         wrapped_command = (
             f"{remote_command}\n"
@@ -79,12 +85,16 @@ class _PersistentBatchSession:
         self._process.kill()
         await self._process.wait()
 
-    async def _read_until_done(self, *, request_id: str, started_at: float) -> CommandResult:
+    async def _read_until_done(
+        self, *, request_id: str, started_at: float
+    ) -> CommandResult:
         payload_lines: list[str] = []
         while True:
             line = await self._process.stdout.readline()
             if line == b"":
-                raise PersistentSessionProtocolError("session closed before completion marker")
+                raise PersistentSessionProtocolError(
+                    "session closed before completion marker"
+                )
 
             decoded_line = line.decode(errors="replace")
             if decoded_line.startswith("__SM_DONE__ "):
