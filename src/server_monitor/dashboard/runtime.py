@@ -6,8 +6,6 @@ import asyncio
 from contextlib import suppress
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
-from types import SimpleNamespace
-import time
 
 from server_monitor.dashboard.status_poller import StatusPoller
 from server_monitor.dashboard.command_policy import (
@@ -15,7 +13,6 @@ from server_monitor.dashboard.command_policy import (
     CommandKind,
     CommandPolicy,
     FailureTracker,
-    classify_failure,
     default_command_policies,
 )
 from server_monitor.dashboard.command_runner import CommandRunner
@@ -26,6 +23,7 @@ from server_monitor.dashboard.terminal_launcher import open_terminal_with_ssh
 from server_monitor.dashboard.ws_hub import WebSocketHub
 from server_monitor.dashboard.git_operations import GitOperations
 from server_monitor.dashboard.command_health import CommandHealthTracker
+from server_monitor.dashboard.command_executor import CommandExecutor
 from server_monitor.dashboard.runtime_helpers import (
     DEFAULT_CLASH,
     GIT_OPERATION_TIMEOUT_SECONDS,
@@ -37,7 +35,6 @@ from server_monitor.dashboard.runtime_helpers import (
     _serialize_runtime_settings,
     _is_ssh_unreachable,
     _find_server,
-    _should_retry,
     _build_freshness_entry,
     _metrics_stream_transport_latency_ms,
     _extract_clash_secret,  # noqa: F401
@@ -144,6 +141,7 @@ class DashboardRuntime:
         self._status_poller = StatusPoller(self)
         self._git_ops = GitOperations(self)
         self._health = CommandHealthTracker(self)
+        self._cmd_exec = CommandExecutor(self)
 
         if self.metrics_stream_manager is not None and hasattr(
             self.metrics_stream_manager, "bind"
@@ -659,167 +657,16 @@ class DashboardRuntime:
         parse_output=None,
         cache_used: bool,
     ) -> _PolicyExecutionOutcome:
-        attempt_durations_ms: list[int] = []
-        had_host_unreachable = False
-        host_unreachable_message = ""
-        tracker = self._failure_tracker_for(
+        return await self._cmd_exec.execute_with_policy(
             server_id=server_id,
+            ssh_alias=ssh_alias,
             command_kind=command_kind,
             target_label=target_label,
+            remote_command=remote_command,
             policy=policy,
+            parse_output=parse_output,
+            cache_used=cache_used,
         )
-        if tracker.in_cooldown(now=time.monotonic()):
-            skipped_result = _SkippedCommandResult()
-            self._append_command_health(
-                CommandHealthRecord(
-                    recorded_at=datetime.now(UTC).isoformat(),
-                    server_id=server_id,
-                    command_kind=command_kind,
-                    target_label=target_label,
-                    ok=False,
-                    failure_class="cooldown_skip",
-                    attempt_count=0,
-                    duration_ms=0,
-                    attempt_durations_ms=[],
-                    exit_code=skipped_result.exit_code,
-                    cooldown_applied=True,
-                    cache_used=cache_used,
-                    message="cooldown active",
-                )
-            )
-            return _PolicyExecutionOutcome(
-                result=skipped_result,
-                parsed=None,
-                failure_class="cooldown_skip",
-                attempt_count=0,
-                message="cooldown active",
-                had_host_unreachable=False,
-                host_unreachable_message="",
-            )
-
-        for attempt in range(1, policy.max_attempts + 1):
-            started_at = time.monotonic()
-            result = await self._run_executor(
-                ssh_alias,
-                remote_command,
-                timeout_seconds=policy.timeout_seconds,
-            )
-            measured_duration_ms = int((time.monotonic() - started_at) * 1000)
-            duration_ms = int(getattr(result, "duration_ms", measured_duration_ms))
-            attempt_durations_ms.append(duration_ms)
-
-            if result.exit_code == 0 and not result.error:
-                if parse_output is not None:
-                    try:
-                        parsed = parse_output(result.stdout)
-                    except Exception as exc:
-                        message = str(exc)
-                        cooldown_applied = tracker.record_failure(now=time.monotonic())
-                        self._append_command_health(
-                            CommandHealthRecord(
-                                recorded_at=datetime.now(UTC).isoformat(),
-                                server_id=server_id,
-                                command_kind=command_kind,
-                                target_label=target_label,
-                                ok=False,
-                                failure_class="parse_error",
-                                attempt_count=attempt,
-                                duration_ms=sum(attempt_durations_ms),
-                                attempt_durations_ms=list(attempt_durations_ms),
-                                exit_code=int(getattr(result, "exit_code", -1)),
-                                cooldown_applied=cooldown_applied,
-                                cache_used=cache_used,
-                                message=message,
-                            )
-                        )
-                        return _PolicyExecutionOutcome(
-                            result=result,
-                            parsed=None,
-                            failure_class="parse_error",
-                            attempt_count=attempt,
-                            message=message,
-                            had_host_unreachable=had_host_unreachable,
-                            host_unreachable_message=host_unreachable_message,
-                        )
-                else:
-                    parsed = None
-
-                tracker.record_success()
-                self._append_command_health(
-                    CommandHealthRecord(
-                        recorded_at=datetime.now(UTC).isoformat(),
-                        server_id=server_id,
-                        command_kind=command_kind,
-                        target_label=target_label,
-                        ok=True,
-                        failure_class="ok",
-                        attempt_count=attempt,
-                        duration_ms=sum(attempt_durations_ms),
-                        attempt_durations_ms=list(attempt_durations_ms),
-                        exit_code=int(getattr(result, "exit_code", 0)),
-                        cooldown_applied=False,
-                        cache_used=False,
-                        message="",
-                    )
-                )
-                return _PolicyExecutionOutcome(
-                    result=result,
-                    parsed=parsed,
-                    failure_class="ok",
-                    attempt_count=attempt,
-                    message="",
-                    had_host_unreachable=had_host_unreachable,
-                    host_unreachable_message=host_unreachable_message,
-                )
-
-            failure_class = classify_failure(
-                error=getattr(result, "error", None),
-                stderr=str(getattr(result, "stderr", "")),
-            )
-            message = str(
-                getattr(result, "error", "")
-                or getattr(result, "stderr", "")
-                or command_kind.value
-            )
-            if _is_ssh_unreachable(result):
-                had_host_unreachable = True
-                if not host_unreachable_message:
-                    host_unreachable_message = message
-            if attempt < policy.max_attempts and _should_retry(
-                policy=policy, failure_class=failure_class
-            ):
-                await asyncio.sleep(policy.base_backoff_seconds * attempt)
-                continue
-
-            cooldown_applied = tracker.record_failure(now=time.monotonic())
-            self._append_command_health(
-                CommandHealthRecord(
-                    recorded_at=datetime.now(UTC).isoformat(),
-                    server_id=server_id,
-                    command_kind=command_kind,
-                    target_label=target_label,
-                    ok=False,
-                    failure_class=failure_class,
-                    attempt_count=attempt,
-                    duration_ms=sum(attempt_durations_ms),
-                    attempt_durations_ms=list(attempt_durations_ms),
-                    exit_code=int(getattr(result, "exit_code", -1)),
-                    cooldown_applied=cooldown_applied,
-                    cache_used=cache_used,
-                    message=message,
-                )
-            )
-            return _PolicyExecutionOutcome(
-                result=result,
-                parsed=None,
-                failure_class=failure_class,
-                attempt_count=attempt,
-                message=message,
-                had_host_unreachable=had_host_unreachable,
-                host_unreachable_message=host_unreachable_message,
-            )
-
-        raise RuntimeError("policy execution exited without result")
 
     def _record_batch_failure(
         self,
@@ -831,49 +678,13 @@ class DashboardRuntime:
         policy: CommandPolicy,
         cache_used: bool,
     ) -> _PolicyExecutionOutcome:
-        failure_class = classify_failure(
-            error=getattr(result, "error", None), stderr=getattr(result, "stderr", "")
-        )
-        message = (
-            getattr(result, "error", None)
-            or getattr(result, "stderr", "")
-            or "batch failed"
-        )
-        tracker = self._failure_tracker_for(
+        return self._cmd_exec.record_batch_failure(
             server_id=server_id,
             command_kind=command_kind,
             target_label=target_label,
-            policy=policy,
-        )
-        cooldown_applied = tracker.record_failure(now=time.monotonic())
-        had_host_unreachable = _is_ssh_unreachable(result)
-        host_unreachable_message = message if had_host_unreachable else ""
-        duration_ms = int(getattr(result, "duration_ms", 0))
-        self._append_command_health(
-            CommandHealthRecord(
-                recorded_at=datetime.now(UTC).isoformat(),
-                server_id=server_id,
-                command_kind=command_kind,
-                target_label=target_label,
-                ok=False,
-                failure_class=failure_class,
-                attempt_count=1,
-                duration_ms=duration_ms,
-                attempt_durations_ms=[duration_ms],
-                exit_code=int(getattr(result, "exit_code", -1)),
-                cooldown_applied=cooldown_applied,
-                cache_used=cache_used,
-                message=message,
-            )
-        )
-        return _PolicyExecutionOutcome(
             result=result,
-            parsed=None,
-            failure_class=failure_class,
-            attempt_count=1,
-            message=message,
-            had_host_unreachable=had_host_unreachable,
-            host_unreachable_message=host_unreachable_message,
+            policy=policy,
+            cache_used=cache_used,
         )
 
     def _record_batch_section_outcome(
@@ -888,94 +699,15 @@ class DashboardRuntime:
         cache_used: bool,
         fallback_duration_ms: int,
     ) -> _PolicyExecutionOutcome:
-        if section_group is None:
-            missing_result = SimpleNamespace(
-                stdout="",
-                stderr="missing batch section",
-                exit_code=-1,
-                duration_ms=fallback_duration_ms,
-                error="parse_error",
-            )
-            return self._record_batch_failure(
-                server_id=server_id,
-                command_kind=command_kind,
-                target_label=target_label,
-                result=missing_result,
-                policy=policy,
-                cache_used=cache_used,
-            )
-
-        stdout_section = section_group.get("stdout")
-        stderr_section = section_group.get("stderr")
-        result = SimpleNamespace(
-            stdout=stdout_section.payload if stdout_section is not None else "",
-            stderr=stderr_section.payload if stderr_section is not None else "",
-            exit_code=stdout_section.exit_code if stdout_section is not None else -1,
-            duration_ms=stdout_section.duration_ms
-            if stdout_section is not None
-            else fallback_duration_ms,
-            error=None,
-        )
-
-        tracker = self._failure_tracker_for(
+        return self._cmd_exec.record_batch_section_outcome(
             server_id=server_id,
             command_kind=command_kind,
             target_label=target_label,
+            section_group=section_group,
             policy=policy,
-        )
-        if result.exit_code == 0:
-            try:
-                parsed = parse_output(result.stdout)
-            except Exception as exc:
-                parse_result = SimpleNamespace(
-                    stdout=result.stdout,
-                    stderr=str(exc),
-                    exit_code=result.exit_code,
-                    duration_ms=result.duration_ms,
-                    error="parse_error",
-                )
-                return self._record_batch_failure(
-                    server_id=server_id,
-                    command_kind=command_kind,
-                    target_label=target_label,
-                    result=parse_result,
-                    policy=policy,
-                    cache_used=cache_used,
-                )
-
-            tracker.record_success()
-            self._append_command_health(
-                CommandHealthRecord(
-                    recorded_at=datetime.now(UTC).isoformat(),
-                    server_id=server_id,
-                    command_kind=command_kind,
-                    target_label=target_label,
-                    ok=True,
-                    failure_class="ok",
-                    attempt_count=1,
-                    duration_ms=result.duration_ms,
-                    attempt_durations_ms=[result.duration_ms],
-                    exit_code=result.exit_code,
-                    cooldown_applied=False,
-                    cache_used=cache_used,
-                    message="ok",
-                )
-            )
-            return _PolicyExecutionOutcome(
-                result=result,
-                parsed=parsed,
-                failure_class="ok",
-                attempt_count=1,
-                message="ok",
-            )
-
-        return self._record_batch_failure(
-            server_id=server_id,
-            command_kind=command_kind,
-            target_label=target_label,
-            result=result,
-            policy=policy,
+            parse_output=parse_output,
             cache_used=cache_used,
+            fallback_duration_ms=fallback_duration_ms,
         )
 
     def _append_command_health(self, record: CommandHealthRecord) -> None:
