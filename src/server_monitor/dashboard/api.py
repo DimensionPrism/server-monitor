@@ -11,7 +11,12 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from server_monitor.dashboard.settings import DashboardSettings, DashboardSettingsStore, NotificationSettings, ServerSettings
+from server_monitor.dashboard.settings import (
+    DashboardSettings,
+    DashboardSettingsStore,
+    NotificationSettings,
+    ServerSettings,
+)
 from server_monitor.dashboard.ws_hub import WebSocketHub
 
 
@@ -90,9 +95,14 @@ def _serialize_settings(settings: DashboardSettings) -> dict:
     }
 
 
-def _require_store(settings_store: DashboardSettingsStore | None) -> DashboardSettingsStore:
+def _require_store(
+    settings_store: DashboardSettingsStore | None,
+) -> DashboardSettingsStore:
     if settings_store is None:
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="settings store unavailable")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="settings store unavailable",
+        )
     return settings_store
 
 
@@ -100,30 +110,46 @@ def _find_server(settings: DashboardSettings, server_id: str) -> ServerSettings:
     for server in settings.servers:
         if server.server_id == server_id:
             return server
-    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"unknown server '{server_id}'")
+    raise HTTPException(
+        status_code=status.HTTP_404_NOT_FOUND, detail=f"unknown server '{server_id}'"
+    )
 
 
 def _require_git_runtime(runtime):
     if runtime is None or not hasattr(runtime, "run_git_operation"):
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="git operations unavailable")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="git operations unavailable",
+        )
     return runtime
 
 
 def _require_open_terminal_runtime(runtime):
     if runtime is None or not hasattr(runtime, "open_repo_terminal"):
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="git open-terminal unavailable")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="git open-terminal unavailable",
+        )
     return runtime
 
 
 def _require_diagnostics_runtime(runtime):
     if runtime is None or not hasattr(runtime, "build_diagnostics_bundle"):
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="diagnostics unavailable")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="diagnostics unavailable",
+        )
     return runtime
 
 
 def _require_clash_tunnel_manager(clash_tunnel_manager):
-    if clash_tunnel_manager is None or not hasattr(clash_tunnel_manager, "open_ui_tunnel"):
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="clash tunnel unavailable")
+    if clash_tunnel_manager is None or not hasattr(
+        clash_tunnel_manager, "open_ui_tunnel"
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="clash tunnel unavailable",
+        )
     return clash_tunnel_manager
 
 
@@ -134,12 +160,20 @@ async def _try_read_clash_secret(*, runtime, ssh_alias: str) -> str | None:
     if executor is None or not hasattr(executor, "run"):
         return None
 
-    from server_monitor.dashboard.runtime import STATUS_COMMAND_TIMEOUT_SECONDS, _clash_secret_command, _extract_clash_secret
+    from server_monitor.dashboard.runtime_helpers import (
+        STATUS_COMMAND_TIMEOUT_SECONDS,
+        _clash_secret_command,
+        _extract_clash_secret,
+    )
 
     secret_command = _clash_secret_command()
     try:
         try:
-            result = await executor.run(ssh_alias, secret_command, timeout_seconds=STATUS_COMMAND_TIMEOUT_SECONDS)
+            result = await executor.run(
+                ssh_alias,
+                secret_command,
+                timeout_seconds=STATUS_COMMAND_TIMEOUT_SECONDS,
+            )
         except TypeError:
             result = await executor.run(ssh_alias, secret_command)
     except Exception:
@@ -180,7 +214,10 @@ def create_dashboard_app(
 ) -> FastAPI:
     """Create FastAPI app exposing health and websocket routes."""
 
-    app = FastAPI(title="Server Monitor Dashboard", lifespan=_build_lifespan(runtime, clash_tunnel_manager))
+    app = FastAPI(
+        title="Server Monitor Dashboard",
+        lifespan=_build_lifespan(runtime, clash_tunnel_manager),
+    )
     static_dir = Path(__file__).with_name("static")
     app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
@@ -225,14 +262,18 @@ def create_dashboard_app(
                 )
             )
         except ValueError as exc:
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT, detail=str(exc)
+            ) from exc
         return _serialize_settings(store.load())
 
     @app.put("/api/servers/{server_id}")
     def update_server(server_id: str, payload: ServerPayload) -> dict:
         store = _require_store(settings_store)
         if payload.server_id != server_id:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="server_id mismatch")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST, detail="server_id mismatch"
+            )
         try:
             store.update_server(
                 server_id,
@@ -246,7 +287,10 @@ def create_dashboard_app(
                 ),
             )
         except KeyError as exc:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"unknown server '{server_id}'") from exc
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"unknown server '{server_id}'",
+            ) from exc
         return _serialize_settings(store.load())
 
     @app.delete("/api/servers/{server_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -269,7 +313,9 @@ def create_dashboard_app(
         store = _require_store(settings_store)
         settings = store.load()
         server = _find_server(settings, server_id)
-        server.working_dirs = [item for item in server.working_dirs if item != payload.path]
+        server.working_dirs = [
+            item for item in server.working_dirs if item != payload.path
+        ]
         store.update_server(server_id, server)
         return _serialize_settings(store.load())
 
@@ -299,12 +345,18 @@ def create_dashboard_app(
                 branch=payload.branch,
             )
         except KeyError as exc:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)
+            ) from exc
         except ValueError as exc:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
+            ) from exc
 
     @app.post("/api/servers/{server_id}/git/open-terminal")
-    async def open_git_terminal(server_id: str, payload: GitOpenTerminalPayload) -> dict:
+    async def open_git_terminal(
+        server_id: str, payload: GitOpenTerminalPayload
+    ) -> dict:
         open_terminal_runtime = _require_open_terminal_runtime(runtime)
         try:
             return await open_terminal_runtime.open_repo_terminal(
@@ -312,11 +364,17 @@ def create_dashboard_app(
                 repo_path=payload.repo_path,
             )
         except KeyError as exc:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)
+            ) from exc
         except ValueError as exc:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
+            ) from exc
         except RuntimeError as exc:
-            raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)
+            ) from exc
 
     @app.post("/api/servers/{server_id}/clash/tunnel/open")
     async def open_clash_tunnel(server_id: str) -> dict:
@@ -330,17 +388,25 @@ def create_dashboard_app(
                 ssh_alias=server.ssh_alias,
                 clash_ui_probe_url=server.clash_ui_probe_url,
             )
-            secret = await _try_read_clash_secret(runtime=runtime, ssh_alias=server.ssh_alias)
+            secret = await _try_read_clash_secret(
+                runtime=runtime, ssh_alias=server.ssh_alias
+            )
             if secret:
                 opened["secret"] = secret
-                auto_login_url = _build_clash_auto_login_url(tunnel_url=str(opened.get("url", "")), secret=secret)
+                auto_login_url = _build_clash_auto_login_url(
+                    tunnel_url=str(opened.get("url", "")), secret=secret
+                )
                 if auto_login_url:
                     opened["auto_login_url"] = auto_login_url
             return opened
         except ValueError as exc:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
+            ) from exc
         except RuntimeError as exc:
-            raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)
+            ) from exc
 
     @app.get("/")
     def index() -> FileResponse:
