@@ -25,6 +25,16 @@ from server_monitor.dashboard.settings import DashboardSettingsStore, ServerSett
 from server_monitor.dashboard.terminal_launcher import open_terminal_with_ssh
 from server_monitor.dashboard.ws_hub import WebSocketHub
 from server_monitor.dashboard.git_operations import GitOperations
+from server_monitor.dashboard.command_health import (
+    CommandHealthTracker,
+    _unknown_command_health_summary,
+    _command_health_summary_from_record,
+    _command_health_state_from_record,
+    _command_health_label,
+    _command_health_severity,
+    _worst_command_health_state,
+    _git_command_health_detail,
+)
 from server_monitor.dashboard.runtime_helpers import (
     DEFAULT_CLASH,
     GIT_OPERATION_TIMEOUT_SECONDS,
@@ -42,13 +52,6 @@ from server_monitor.dashboard.runtime_helpers import (
     _metrics_stream_transport_latency_ms,
     _extract_clash_secret,  # noqa: F401
     _empty_repo_status,
-    _unknown_command_health_summary,
-    _command_health_summary_from_record,
-    _command_health_state_from_record,
-    _command_health_label,
-    _command_health_severity,
-    _worst_command_health_state,
-    _git_command_health_detail,
 )
 
 
@@ -150,6 +153,7 @@ class DashboardRuntime:
         self._metrics_stream_status: dict[str, _MetricsStreamStatus] = {}
         self._status_poller = StatusPoller(self)
         self._git_ops = GitOperations(self)
+        self._health = CommandHealthTracker(self)
 
         if self.metrics_stream_manager is not None and hasattr(
             self.metrics_stream_manager, "bind"
@@ -985,11 +989,7 @@ class DashboardRuntime:
         )
 
     def _append_command_health(self, record: CommandHealthRecord) -> None:
-        key = (record.server_id, record.command_kind.value, record.target_label)
-        history = self._recent_command_health.setdefault(key, [])
-        history.append(record)
-        if len(history) > COMMAND_HEALTH_HISTORY_LIMIT:
-            history.pop(0)
+        return self._health.append_command_health(record)
 
     def _failure_tracker_for(
         self,
@@ -999,99 +999,20 @@ class DashboardRuntime:
         target_label: str,
         policy: CommandPolicy,
     ) -> FailureTracker:
-        key = (server_id, command_kind.value, target_label)
-        tracker = self._failure_trackers.get(key)
-        if tracker is None:
-            tracker = FailureTracker(
-                cooldown_after_failures=policy.cooldown_after_failures,
-                cooldown_seconds=policy.cooldown_seconds,
-            )
-            self._failure_trackers[key] = tracker
-        return tracker
+        return self._health.failure_tracker_for(
+            server_id=server_id,
+            command_kind=command_kind,
+            target_label=target_label,
+            policy=policy,
+        )
 
     def _summarize_server_command_health(
         self, *, server: ServerSettings
     ) -> dict[str, dict]:
-        summaries: dict[str, dict] = {}
-        for panel_name in server.enabled_panels:
-            try:
-                if panel_name == "system":
-                    if self.metrics_stream_manager is not None:
-                        summaries[panel_name] = self._summary_for_metrics_stream(
-                            server_id=server.server_id
-                        )
-                    else:
-                        summaries[panel_name] = self._summary_for_single_command(
-                            server_id=server.server_id,
-                            command_kind=CommandKind.SYSTEM,
-                            target_label="server",
-                            detail="Last poll succeeded",
-                        )
-                elif panel_name == "gpu":
-                    if self.metrics_stream_manager is not None:
-                        summaries[panel_name] = self._summary_for_metrics_stream(
-                            server_id=server.server_id
-                        )
-                    else:
-                        summaries[panel_name] = self._summary_for_single_command(
-                            server_id=server.server_id,
-                            command_kind=CommandKind.GPU,
-                            target_label="server",
-                            detail="Last poll succeeded",
-                        )
-                elif panel_name == "git":
-                    summaries[panel_name] = self._summary_for_git(server=server)
-                elif panel_name == "clash":
-                    summaries[panel_name] = self._summary_for_clash(
-                        server_id=server.server_id
-                    )
-            except Exception:
-                summaries[panel_name] = _unknown_command_health_summary()
-        return summaries
+        return self._health.summarize_server_command_health(server=server)
 
     def _summary_for_metrics_stream(self, *, server_id: str) -> dict:
-        stream_status = self._metrics_stream_status.get(server_id)
-        if stream_status is None:
-            return _unknown_command_health_summary()
-
-        if stream_status.state == "live":
-            latency_ms = stream_status.transport_latency_ms
-            return {
-                "state": "healthy",
-                "label": f"{latency_ms}ms" if latency_ms is not None else "--",
-                "latency_ms": latency_ms,
-                "detail": "Metrics stream transport latency"
-                if latency_ms is not None
-                else "Metrics stream active",
-                "updated_at": stream_status.last_sample_received_at,
-            }
-        if stream_status.state == "reconnecting":
-            return {
-                "state": "retrying",
-                "label": "reconnecting",
-                "latency_ms": None,
-                "detail": "Metrics stream reconnecting",
-                "updated_at": stream_status.state_changed_at
-                or stream_status.last_sample_received_at,
-            }
-        if stream_status.state == "connecting":
-            return {
-                "state": "retrying",
-                "label": "connecting",
-                "latency_ms": None,
-                "detail": "Metrics stream connecting",
-                "updated_at": stream_status.state_changed_at,
-            }
-        if stream_status.state == "stopped":
-            return {
-                "state": "failed",
-                "label": "stopped",
-                "latency_ms": None,
-                "detail": "Metrics stream stopped",
-                "updated_at": stream_status.state_changed_at
-                or stream_status.last_sample_received_at,
-            }
-        return _unknown_command_health_summary()
+        return self._health.summary_for_metrics_stream(server_id=server_id)
 
     def _summary_for_single_command(
         self,
@@ -1101,99 +1022,18 @@ class DashboardRuntime:
         target_label: str,
         detail: str,
     ) -> dict:
-        record = self._latest_command_health_record(
+        return self._health.summary_for_single_command(
             server_id=server_id,
             command_kind=command_kind,
             target_label=target_label,
+            detail=detail,
         )
-        return _command_health_summary_from_record(record, default_detail=detail)
 
     def _summary_for_git(self, *, server: ServerSettings) -> dict:
-        records = [
-            record
-            for repo_path in server.working_dirs
-            if (
-                record := self._latest_command_health_record(
-                    server_id=server.server_id,
-                    command_kind=CommandKind.GIT_STATUS,
-                    target_label=repo_path,
-                )
-            )
-            is not None
-        ]
-        if not records:
-            return _unknown_command_health_summary()
-
-        state = _worst_command_health_state(
-            _command_health_state_from_record(record) for record in records
-        )
-        if state == "healthy":
-            latency_ms = max(record.duration_ms for record in records)
-            updated_at = max(record.recorded_at for record in records)
-            return {
-                "state": state,
-                "label": _command_health_label(
-                    state=state, latency_ms=latency_ms, attempt_count=1
-                ),
-                "latency_ms": latency_ms,
-                "detail": "All repos healthy",
-                "updated_at": updated_at,
-            }
-
-        matching_records = [
-            record
-            for record in records
-            if _command_health_state_from_record(record) == state
-        ]
-        worst_record = max(
-            matching_records,
-            key=lambda record: (
-                _command_health_severity(_command_health_state_from_record(record)),
-                record.duration_ms,
-            ),
-        )
-        return {
-            "state": state,
-            "label": _command_health_label(
-                state=state,
-                latency_ms=worst_record.duration_ms,
-                attempt_count=worst_record.attempt_count,
-            ),
-            "latency_ms": worst_record.duration_ms,
-            "detail": _git_command_health_detail(state),
-            "updated_at": worst_record.recorded_at,
-        }
+        return self._health.summary_for_git(server=server)
 
     def _summary_for_clash(self, *, server_id: str) -> dict:
-        secret_record = self._latest_command_health_record(
-            server_id=server_id,
-            command_kind=CommandKind.CLASH_SECRET,
-            target_label="server",
-        )
-        probe_record = self._latest_command_health_record(
-            server_id=server_id,
-            command_kind=CommandKind.CLASH_PROBE,
-            target_label="server",
-        )
-
-        secret_state = _command_health_state_from_record(secret_record)
-        probe_state = _command_health_state_from_record(probe_record)
-
-        if secret_state in {"failed", "cooldown", "retrying"}:
-            return _command_health_summary_from_record(
-                secret_record, default_detail="Secret check failed"
-            )
-        if probe_record is not None:
-            return _command_health_summary_from_record(
-                probe_record, default_detail="Last probe succeeded"
-            )
-        if secret_record is not None:
-            return _command_health_summary_from_record(
-                secret_record, default_detail="Last secret check succeeded"
-            )
-        if secret_state == "unknown" and probe_state == "unknown":
-            return _unknown_command_health_summary()
-        return _unknown_command_health_summary()
+        return self._health.summary_for_clash(server_id=server_id)
 
     def _latest_command_health_record(
         self,
@@ -1202,12 +1042,11 @@ class DashboardRuntime:
         command_kind: CommandKind,
         target_label: str,
     ) -> CommandHealthRecord | None:
-        records = self._recent_command_health.get(
-            (server_id, command_kind.value, target_label), []
+        return self._health.latest_command_health_record(
+            server_id=server_id,
+            command_kind=command_kind,
+            target_label=target_label,
         )
-        if not records:
-            return None
-        return records[-1]
 
     def get_recent_command_health(
         self,

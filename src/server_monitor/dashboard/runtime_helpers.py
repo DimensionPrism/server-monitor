@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 import re
 from typing import TYPE_CHECKING
 
-from server_monitor.dashboard.command_policy import CommandHealthRecord, CommandPolicy
+from server_monitor.dashboard.command_policy import CommandPolicy
 
 if TYPE_CHECKING:
     from server_monitor.dashboard.settings import ServerSettings
@@ -36,99 +36,6 @@ def _needs_status_poll(
 def _metrics_sleep_seconds(*, interval_seconds: float, elapsed_seconds: float) -> float:
     target_interval_seconds = max(0.5, interval_seconds)
     return max(0.05, target_interval_seconds - elapsed_seconds)
-
-
-def _unknown_command_health_summary() -> dict:
-    return {
-        "state": "unknown",
-        "label": "--",
-        "latency_ms": None,
-        "detail": "No command history yet",
-        "updated_at": None,
-    }
-
-
-def _command_health_summary_from_record(
-    record: CommandHealthRecord | None, *, default_detail: str
-) -> dict:
-    if record is None:
-        return _unknown_command_health_summary()
-
-    state = _command_health_state_from_record(record)
-    detail = default_detail
-    if state == "retrying":
-        detail = f"Last poll succeeded after {record.attempt_count} attempts"
-    elif state == "cooldown":
-        detail = "Command cooling down after repeated failures"
-    elif state == "failed":
-        detail = record.message or "Last poll failed"
-
-    return {
-        "state": state,
-        "label": _command_health_label(
-            state=state,
-            latency_ms=record.duration_ms,
-            attempt_count=record.attempt_count,
-        ),
-        "latency_ms": record.duration_ms,
-        "detail": detail,
-        "updated_at": record.recorded_at,
-    }
-
-
-def _command_health_state_from_record(record: CommandHealthRecord | None) -> str:
-    if record is None:
-        return "unknown"
-    if record.ok and record.attempt_count > 1:
-        return "retrying"
-    if record.ok:
-        return "healthy"
-    if record.failure_class == "cooldown_skip":
-        return "cooldown"
-    return "failed"
-
-
-def _command_health_label(
-    *, state: str, latency_ms: int | None, attempt_count: int
-) -> str:
-    if state == "healthy":
-        return f"{latency_ms}ms" if latency_ms is not None else "--"
-    if state == "retrying":
-        return f"retry x{max(attempt_count, 2)}"
-    if state == "cooldown":
-        return "cooldown"
-    if state == "failed":
-        return "failed"
-    return "--"
-
-
-def _command_health_severity(state: str) -> int:
-    return {
-        "unknown": 0,
-        "healthy": 1,
-        "retrying": 2,
-        "cooldown": 3,
-        "failed": 4,
-    }.get(state, 0)
-
-
-def _worst_command_health_state(states) -> str:
-    state_list = list(states)
-    if not state_list:
-        return "unknown"
-    return max(state_list, key=_command_health_severity)
-
-
-def _git_command_health_detail(state: str) -> str:
-    if state == "healthy":
-        return "All repos healthy"
-    if state == "retrying":
-        return "One or more repos required retries"
-    if state == "cooldown":
-        return "One or more repos are cooling down"
-    if state == "failed":
-        return "One or more repos failed"
-    return "No repo health history yet"
 
 
 def _find_server(servers: list[ServerSettings], server_id: str) -> ServerSettings:
