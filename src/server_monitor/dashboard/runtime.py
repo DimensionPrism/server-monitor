@@ -24,6 +24,7 @@ from server_monitor.dashboard.normalize import normalize_server_payload
 from server_monitor.dashboard.settings import DashboardSettingsStore, ServerSettings
 from server_monitor.dashboard.terminal_launcher import open_terminal_with_ssh
 from server_monitor.dashboard.ws_hub import WebSocketHub
+from server_monitor.dashboard.git_operations import GitOperations
 from server_monitor.dashboard.runtime_helpers import (
     DEFAULT_CLASH,
     GIT_OPERATION_TIMEOUT_SECONDS,
@@ -148,6 +149,7 @@ class DashboardRuntime:
         self._failure_trackers: dict[tuple[str, str, str], FailureTracker] = {}
         self._metrics_stream_status: dict[str, _MetricsStreamStatus] = {}
         self._status_poller = StatusPoller(self)
+        self._git_ops = GitOperations(self)
 
         if self.metrics_stream_manager is not None and hasattr(
             self.metrics_stream_manager, "bind"
@@ -516,36 +518,9 @@ class DashboardRuntime:
         previous_repos: list[dict],
         polled_at_iso: str,
     ) -> tuple[list[dict], int, dict[str, bool]]:
-        previous_by_path = {
-            repo.get("path"): repo
-            for repo in previous_repos
-            if isinstance(repo, dict) and isinstance(repo.get("path"), str)
-        }
-        repo_tasks = [
-            asyncio.create_task(
-                self._poll_single_git_repo(
-                    server=server,
-                    repo_path=repo,
-                    previous_repo=previous_by_path.get(repo),
-                    polled_at_iso=polled_at_iso,
-                )
-            )
-            for repo in server.working_dirs
-        ]
-        if not repo_tasks:
-            return [], 0, {}
-
-        repos: list[dict] = []
-        successful_polls = 0
-        repo_poll_ok: dict[str, bool] = {}
-        results = await asyncio.gather(*repo_tasks)
-        for repo_path, repo_result, success in results:
-            repo_poll_ok[repo_path] = success
-            if repo_result is not None:
-                repos.append(repo_result)
-            if success:
-                successful_polls += 1
-        return repos, successful_polls, repo_poll_ok
+        return await self._git_ops.poll_git_repos(
+            server, previous_repos=previous_repos, polled_at_iso=polled_at_iso
+        )
 
     async def _poll_single_git_repo(
         self,
@@ -555,26 +530,12 @@ class DashboardRuntime:
         previous_repo: dict | None,
         polled_at_iso: str,
     ) -> tuple[str, dict | None, bool]:
-        command = _git_status_command(repo_path)
-        execution = await self._execute_with_policy(
-            server_id=server.server_id,
-            ssh_alias=server.ssh_alias,
-            command_kind=CommandKind.GIT_STATUS,
-            target_label=repo_path,
-            remote_command=command,
-            policy=self._command_policies[CommandKind.GIT_STATUS],
-            parse_output=lambda stdout: parse_repo_status(
-                path=repo_path,
-                porcelain_text=stdout,
-                last_commit_age_seconds=0,
-            ),
-            cache_used=previous_repo is not None,
+        return await self._git_ops.poll_single_git_repo(
+            server=server,
+            repo_path=repo_path,
+            previous_repo=previous_repo,
+            polled_at_iso=polled_at_iso,
         )
-        if execution.failure_class != "ok":
-            return repo_path, previous_repo, False
-        repo = execution.parsed
-        repo["last_updated_at"] = polled_at_iso
-        return (repo_path, repo, True)
 
     async def run_git_operation(
         self,
@@ -688,21 +649,7 @@ class DashboardRuntime:
     async def _run_git_operation_command(
         self, alias: str, remote_command: str, *, timeout_seconds: float
     ):
-        if self.batch_transport is not None and hasattr(self.batch_transport, "run"):
-            try:
-                return await self.batch_transport.run(
-                    alias, remote_command, timeout_seconds=timeout_seconds
-                )
-            except Exception as exc:
-                message = str(exc) or "persistent transport failed"
-                return SimpleNamespace(
-                    stdout="",
-                    stderr=message,
-                    exit_code=-1,
-                    duration_ms=0,
-                    error=message,
-                )
-        return await self._run_executor(
+        return await self._git_ops.run_git_operation_command(
             alias, remote_command, timeout_seconds=timeout_seconds
         )
 
@@ -1374,15 +1321,4 @@ class DashboardRuntime:
         }
 
     def _replace_cached_repo(self, *, server_id: str, repo: dict) -> None:
-        existing = self._repo_cache.get(server_id, [])
-        replaced = False
-        updated: list[dict] = []
-        for item in existing:
-            if item.get("path") == repo.get("path"):
-                updated.append(repo)
-                replaced = True
-            else:
-                updated.append(item)
-        if not replaced:
-            updated.append(repo)
-        self._repo_cache[server_id] = updated
+        return self._git_ops.replace_cached_repo(server_id=server_id, repo=repo)
