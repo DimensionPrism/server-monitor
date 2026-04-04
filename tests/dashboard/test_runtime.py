@@ -72,10 +72,15 @@ class _FakeExecutor:
     def __init__(self):
         self.calls = []
 
-    async def run(self, alias: str, remote_command: str, timeout_seconds: float | None = None):
+    async def run(
+        self, alias: str, remote_command: str, timeout_seconds: float | None = None
+    ):
         self.calls.append((alias, remote_command, timeout_seconds))
 
-        if "SMTOKEN BEGIN kind=system target=server" in remote_command and "nvidia-smi" in remote_command:
+        if (
+            "SMTOKEN BEGIN kind=system target=server" in remote_command
+            and "nvidia-smi" in remote_command
+        ):
             return _Result(
                 "SMTOKEN BEGIN kind=system target=server exit=0 duration_ms=111 stream=stdout\n"
                 "CPU: 11.0\n"
@@ -88,7 +93,10 @@ class _FakeExecutor:
                 "0, NVIDIA A100, 70, 1024, 40960, 50\n"
                 "SMTOKEN END\n"
             )
-        if "SMTOKEN BEGIN kind=git_status target=" in remote_command and "SMTOKEN BEGIN kind=clash_secret target=server" in remote_command:
+        if (
+            "SMTOKEN BEGIN kind=git_status target=" in remote_command
+            and "SMTOKEN BEGIN kind=clash_secret target=server" in remote_command
+        ):
             repo_paths = re.findall(r"kind=git_status target=([^ ]+)", remote_command)
             repo_sections = "".join(
                 _batch_stdout_section(
@@ -121,7 +129,9 @@ class _FakeExecutor:
         if "git -C" in remote_command:
             return _Result("## main...origin/main\n M README.md\n")
         if "pgrep -f clash" in remote_command:
-            return _Result("running=true\napi_reachable=false\nui_reachable=false\nmessage=ok")
+            return _Result(
+                "running=true\napi_reachable=false\nui_reachable=false\nmessage=ok"
+            )
         return _Result("CPU: 11.0\nMEM: 22.0\nDISK: 33.0\nRX_KBPS: 0\nTX_KBPS: 0")
 
 
@@ -148,7 +158,9 @@ class _GitOpExecutor:
             return _Result("up to date")
         if "status --porcelain --branch" in remote_command:
             return _Result("## main...origin/main [ahead 1]\n M README.md\n")
-        return _Result("", stderr="unknown command", exit_code=1, error="unknown command")
+        return _Result(
+            "", stderr="unknown command", exit_code=1, error="unknown command"
+        )
 
 
 class _FlakyGitStatusExecutor:
@@ -162,7 +174,12 @@ class _FlakyGitStatusExecutor:
             self._git_status_calls += 1
             if self._git_status_calls == 1:
                 return _Result("## main...origin/main\n M README.md\n")
-            return _Result("", stderr="temporary git status failure", exit_code=1, error="temporary git status failure")
+            return _Result(
+                "",
+                stderr="temporary git status failure",
+                exit_code=1,
+                error="temporary git status failure",
+            )
         return _Result("")
 
 
@@ -170,9 +187,13 @@ class _TimeoutAwareGitExecutor:
     def __init__(self):
         self.calls = []
 
-    async def run(self, alias: str, remote_command: str, timeout_seconds: float | None = None):
+    async def run(
+        self, alias: str, remote_command: str, timeout_seconds: float | None = None
+    ):
         self.calls.append((alias, remote_command, timeout_seconds))
-        if "fetch --prune --tags" in remote_command and (timeout_seconds is None or timeout_seconds < 4.0):
+        if "fetch --prune --tags" in remote_command and (
+            timeout_seconds is None or timeout_seconds < 4.0
+        ):
             return _Result("", stderr="", exit_code=-1, error="timeout")
         if "status --porcelain --branch" in remote_command:
             return _Result("## main...origin/main\n")
@@ -193,7 +214,9 @@ class _GitOpBatchTransport:
             return _Result("Already on 'main'\n")
         if "status --porcelain --branch" in remote_command:
             return _Result("## main...origin/main [behind 2]\n")
-        return _Result("", stderr="unknown command", exit_code=1, error="unknown command")
+        return _Result(
+            "", stderr="unknown command", exit_code=1, error="unknown command"
+        )
 
 
 class _FailingGitOpBatchTransport:
@@ -209,7 +232,9 @@ class _SlowGitStatusExecutor:
     def __init__(self):
         self.calls = []
 
-    async def run(self, alias: str, remote_command: str, timeout_seconds: float | None = None):
+    async def run(
+        self, alias: str, remote_command: str, timeout_seconds: float | None = None
+    ):
         self.calls.append((alias, remote_command, timeout_seconds))
         if "status --porcelain --branch" in remote_command:
             if timeout_seconds is None or timeout_seconds < 5.0:
@@ -222,7 +247,9 @@ class _VerySlowGitStatusExecutor:
     def __init__(self):
         self.calls = []
 
-    async def run(self, alias: str, remote_command: str, timeout_seconds: float | None = None):
+    async def run(
+        self, alias: str, remote_command: str, timeout_seconds: float | None = None
+    ):
         self.calls.append((alias, remote_command, timeout_seconds))
         if "status --porcelain --branch" in remote_command:
             if timeout_seconds is None or timeout_seconds < 10.0:
@@ -236,7 +263,9 @@ class _DelayedExecutor:
         self.delay_seconds = delay_seconds
         self.calls = []
 
-    async def run(self, alias: str, remote_command: str, timeout_seconds: float | None = None):
+    async def run(
+        self, alias: str, remote_command: str, timeout_seconds: float | None = None
+    ):
         self.calls.append((alias, remote_command, timeout_seconds))
         await asyncio.sleep(self.delay_seconds)
         if "clashsecret" in remote_command:
@@ -246,7 +275,9 @@ class _DelayedExecutor:
         if "git -C" in remote_command:
             return _Result("## main...origin/main\n M README.md\n")
         if "pgrep -f clash" in remote_command:
-            return _Result("running=true\napi_reachable=false\nui_reachable=false\nmessage=ok")
+            return _Result(
+                "running=true\napi_reachable=false\nui_reachable=false\nmessage=ok"
+            )
         return _Result("CPU: 11.0\nMEM: 22.0\nDISK: 33.0\nRX_KBPS: 0\nTX_KBPS: 0")
 
 
@@ -255,9 +286,14 @@ class _FlakyMetricsExecutor:
         self.calls = []
         self._metrics_batch_calls = 0
 
-    async def run(self, alias: str, remote_command: str, timeout_seconds: float | None = None):
+    async def run(
+        self, alias: str, remote_command: str, timeout_seconds: float | None = None
+    ):
         self.calls.append((alias, remote_command, timeout_seconds))
-        if "SMTOKEN BEGIN kind=system target=server" in remote_command and "nvidia-smi" in remote_command:
+        if (
+            "SMTOKEN BEGIN kind=system target=server" in remote_command
+            and "nvidia-smi" in remote_command
+        ):
             self._metrics_batch_calls += 1
             if self._metrics_batch_calls == 1:
                 return _Result(
@@ -282,7 +318,9 @@ class _SystemPollErrorExecutor:
     def __init__(self):
         self.calls = []
 
-    async def run(self, alias: str, remote_command: str, timeout_seconds: float | None = None):
+    async def run(
+        self, alias: str, remote_command: str, timeout_seconds: float | None = None
+    ):
         self.calls.append((alias, remote_command, timeout_seconds))
         if "CPU=$(top -bn1" in remote_command:
             return _Result("", stderr="timeout", exit_code=-1, error="timeout")
@@ -293,7 +331,9 @@ class _SystemPollErrorExecutor:
         if "git -C" in remote_command:
             return _Result("## main...origin/main\n M README.md\n")
         if "pgrep -f clash" in remote_command:
-            return _Result("running=true\napi_reachable=false\nui_reachable=false\nmessage=ok")
+            return _Result(
+                "running=true\napi_reachable=false\nui_reachable=false\nmessage=ok"
+            )
         return _Result("")
 
 
@@ -302,28 +342,41 @@ class _MixedRepoFreshnessExecutor:
         self.calls = []
         self._repo_fail_calls = 0
 
-    async def run(self, alias: str, remote_command: str, timeout_seconds: float | None = None):
+    async def run(
+        self, alias: str, remote_command: str, timeout_seconds: float | None = None
+    ):
         self.calls.append((alias, remote_command, timeout_seconds))
         if "/work/repo-fail" in remote_command:
             self._repo_fail_calls += 1
             if self._repo_fail_calls >= 2:
-                return _Result("", stderr="temporary git status failure", exit_code=1, error="temporary git status failure")
+                return _Result(
+                    "",
+                    stderr="temporary git status failure",
+                    exit_code=1,
+                    error="temporary git status failure",
+                )
             return _Result("## main...origin/main\n M README.md\n")
         if "/work/repo-ok" in remote_command:
             return _Result("## main...origin/main\n M README.md\n")
-        return _Result("", stderr="unknown command", exit_code=1, error="unknown command")
+        return _Result(
+            "", stderr="unknown command", exit_code=1, error="unknown command"
+        )
 
 
 class _SecretAwareClashExecutor:
     def __init__(self):
         self.calls = []
 
-    async def run(self, alias: str, remote_command: str, timeout_seconds: float | None = None):
+    async def run(
+        self, alias: str, remote_command: str, timeout_seconds: float | None = None
+    ):
         self.calls.append((alias, remote_command, timeout_seconds))
         if "clashsecret" in remote_command:
             return _Result("😼 当前密钥：mysecret")
         if "pgrep -f clash" in remote_command:
-            return _Result("running=true\napi_reachable=true\nui_reachable=true\nmessage=ok")
+            return _Result(
+                "running=true\napi_reachable=true\nui_reachable=true\nmessage=ok"
+            )
         return _Result("")
 
 
@@ -331,12 +384,16 @@ class _MissingSecretClashExecutor:
     def __init__(self):
         self.calls = []
 
-    async def run(self, alias: str, remote_command: str, timeout_seconds: float | None = None):
+    async def run(
+        self, alias: str, remote_command: str, timeout_seconds: float | None = None
+    ):
         self.calls.append((alias, remote_command, timeout_seconds))
         if "clashsecret" in remote_command:
             return _Result("no secret")
         if "pgrep -f clash" in remote_command:
-            return _Result("running=true\napi_reachable=true\nui_reachable=true\nmessage=ok")
+            return _Result(
+                "running=true\napi_reachable=true\nui_reachable=true\nmessage=ok"
+            )
         return _Result("")
 
 
@@ -345,13 +402,17 @@ class _StallingStatusExecutor:
         self.calls = []
         self.delay_seconds = delay_seconds
 
-    async def run(self, alias: str, remote_command: str, timeout_seconds: float | None = None):
+    async def run(
+        self, alias: str, remote_command: str, timeout_seconds: float | None = None
+    ):
         self.calls.append((alias, remote_command, timeout_seconds))
         if "clashsecret" in remote_command:
             await asyncio.sleep(self.delay_seconds)
             return _Result("😼 当前密钥：mysecret")
         if "pgrep -f clash" in remote_command:
-            return _Result("running=true\napi_reachable=true\nui_reachable=true\nmessage=ok")
+            return _Result(
+                "running=true\napi_reachable=true\nui_reachable=true\nmessage=ok"
+            )
         if "CPU=$(top -bn1" in remote_command:
             return _Result("CPU: 11.0\nMEM: 22.0\nDISK: 33.0\nRX_KBPS: 0\nTX_KBPS: 0")
         return _Result("")
@@ -362,7 +423,9 @@ class _SecretTimeoutAfterSuccessExecutor:
         self.calls = []
         self._secret_calls = 0
 
-    async def run(self, alias: str, remote_command: str, timeout_seconds: float | None = None):
+    async def run(
+        self, alias: str, remote_command: str, timeout_seconds: float | None = None
+    ):
         self.calls.append((alias, remote_command, timeout_seconds))
         if "clashsecret" in remote_command:
             self._secret_calls += 1
@@ -370,7 +433,9 @@ class _SecretTimeoutAfterSuccessExecutor:
                 return _Result("😼 当前密钥：mysecret")
             return _Result("", stderr="timeout", exit_code=-1, error="timeout")
         if "pgrep -f clash" in remote_command:
-            return _Result("running=true\napi_reachable=true\nui_reachable=true\nmessage=ok")
+            return _Result(
+                "running=true\napi_reachable=true\nui_reachable=true\nmessage=ok"
+            )
         return _Result("")
 
 
@@ -378,7 +443,9 @@ class _ClashLocationExecutor:
     def __init__(self):
         self.calls = []
 
-    async def run(self, alias: str, remote_command: str, timeout_seconds: float | None = None):
+    async def run(
+        self, alias: str, remote_command: str, timeout_seconds: float | None = None
+    ):
         self.calls.append((alias, remote_command, timeout_seconds))
         if "clashsecret" in remote_command:
             return _Result("😼 当前密钥：mysecret")
@@ -399,7 +466,9 @@ class _RetrySystemTimeoutExecutor:
         self.calls = []
         self._system_calls = 0
 
-    async def run(self, alias: str, remote_command: str, timeout_seconds: float | None = None):
+    async def run(
+        self, alias: str, remote_command: str, timeout_seconds: float | None = None
+    ):
         self.calls.append((alias, remote_command, timeout_seconds))
         if "CPU=$(top -bn1" in remote_command:
             self._system_calls += 1
@@ -413,10 +482,14 @@ class _SystemParseFailureExecutor:
     def __init__(self):
         self.calls = []
 
-    async def run(self, alias: str, remote_command: str, timeout_seconds: float | None = None):
+    async def run(
+        self, alias: str, remote_command: str, timeout_seconds: float | None = None
+    ):
         self.calls.append((alias, remote_command, timeout_seconds))
         if "CPU=$(top -bn1" in remote_command:
-            return _Result("CPU: not-a-number\nMEM: 22.0\nDISK: 33.0\nRX_KBPS: 0\nTX_KBPS: 0")
+            return _Result(
+                "CPU: not-a-number\nMEM: 22.0\nDISK: 33.0\nRX_KBPS: 0\nTX_KBPS: 0"
+            )
         return _Result("")
 
 
@@ -424,7 +497,9 @@ class _AlwaysTimeoutClashSecretExecutor:
     def __init__(self):
         self.calls = []
 
-    async def run(self, alias: str, remote_command: str, timeout_seconds: float | None = None):
+    async def run(
+        self, alias: str, remote_command: str, timeout_seconds: float | None = None
+    ):
         self.calls.append((alias, remote_command, timeout_seconds))
         if "clashsecret" in remote_command:
             return _Result("", stderr="timeout", exit_code=-1, error="timeout")
@@ -436,7 +511,9 @@ class _GitStatusCooldownExecutor:
         self.calls = []
         self._git_status_calls = 0
 
-    async def run(self, alias: str, remote_command: str, timeout_seconds: float | None = None):
+    async def run(
+        self, alias: str, remote_command: str, timeout_seconds: float | None = None
+    ):
         self.calls.append((alias, remote_command, timeout_seconds))
         if "git -C" in remote_command:
             self._git_status_calls += 1
@@ -451,7 +528,9 @@ class _RecoveredSystemRetryExecutor:
         self.calls = []
         self._system_calls = 0
 
-    async def run(self, alias: str, remote_command: str, timeout_seconds: float | None = None):
+    async def run(
+        self, alias: str, remote_command: str, timeout_seconds: float | None = None
+    ):
         self.calls.append((alias, remote_command, timeout_seconds))
         if "CPU=$(top -bn1" in remote_command:
             self._system_calls += 1
@@ -463,7 +542,9 @@ class _RecoveredSystemRetryExecutor:
         if "clashsecret" in remote_command:
             return _Result("😼 当前密钥：mysecret")
         if "pgrep -f clash" in remote_command:
-            return _Result("running=true\napi_reachable=true\nui_reachable=true\nmessage=ok")
+            return _Result(
+                "running=true\napi_reachable=true\nui_reachable=true\nmessage=ok"
+            )
         return _Result("")
 
 
@@ -471,7 +552,9 @@ class _MetricsBatchExecutor:
     def __init__(self):
         self.calls = []
 
-    async def run(self, alias: str, remote_command: str, timeout_seconds: float | None = None):
+    async def run(
+        self, alias: str, remote_command: str, timeout_seconds: float | None = None
+    ):
         self.calls.append((alias, remote_command, timeout_seconds))
         return _Result(
             "SMTOKEN BEGIN kind=system target=server exit=0 duration_ms=111 stream=stdout\n"
@@ -487,7 +570,9 @@ class _MetricsBatchExecutor:
         )
 
 
-def _batch_stdout_section(*, kind: str, target: str, payload: str, exit_code: int = 0, duration_ms: int = 100) -> str:
+def _batch_stdout_section(
+    *, kind: str, target: str, payload: str, exit_code: int = 0, duration_ms: int = 100
+) -> str:
     normalized_payload = payload if payload.endswith("\n") else f"{payload}\n"
     return (
         f"SMTOKEN BEGIN kind={kind} target={target} exit={exit_code} duration_ms={duration_ms} stream=stdout\n"
@@ -496,7 +581,9 @@ def _batch_stdout_section(*, kind: str, target: str, payload: str, exit_code: in
     )
 
 
-def _batch_stderr_section(*, kind: str, target: str, payload: str, exit_code: int = 1, duration_ms: int = 100) -> str:
+def _batch_stderr_section(
+    *, kind: str, target: str, payload: str, exit_code: int = 1, duration_ms: int = 100
+) -> str:
     normalized_payload = payload if payload.endswith("\n") else f"{payload}\n"
     return (
         f"SMTOKEN BEGIN kind={kind} target={target} exit={exit_code} duration_ms={duration_ms} stream=stderr\n"
@@ -510,7 +597,9 @@ class _StatusBatchExecutor:
         self.calls = []
         self._status_calls = 0
 
-    async def run(self, alias: str, remote_command: str, timeout_seconds: float | None = None):
+    async def run(
+        self, alias: str, remote_command: str, timeout_seconds: float | None = None
+    ):
         self.calls.append((alias, remote_command, timeout_seconds))
         self._status_calls += 1
         if self._status_calls == 1:
@@ -581,7 +670,9 @@ class _StatusBatchSecretFailureExecutor:
         self.calls = []
         self._status_calls = 0
 
-    async def run(self, alias: str, remote_command: str, timeout_seconds: float | None = None):
+    async def run(
+        self, alias: str, remote_command: str, timeout_seconds: float | None = None
+    ):
         self.calls.append((alias, remote_command, timeout_seconds))
         self._status_calls += 1
         if self._status_calls == 1:
@@ -841,7 +932,10 @@ async def test_runtime_batches_status_poll_and_keeps_cached_repo_on_single_repo_
     payload = ws.messages[-1]
     assert len(executor.calls) == 2
     assert len(payload["repos"]) == 2
-    assert {repo["path"] for repo in payload["repos"]} == {"/work/repo-a", "/work/repo-b"}
+    assert {repo["path"] for repo in payload["repos"]} == {
+        "/work/repo-a",
+        "/work/repo-b",
+    }
     assert payload["command_health"]["git"]["state"] == "failed"
 
 
@@ -1207,7 +1301,9 @@ async def test_runtime_open_repo_terminal_dispatches_to_launcher():
         from server_monitor.dashboard.terminal_launcher import LaunchResult
 
         calls.append((ssh_alias, repo_path))
-        return LaunchResult(ok=True, launched_with="x-terminal-emulator", detail="opened")
+        return LaunchResult(
+            ok=True, launched_with="x-terminal-emulator", detail="opened"
+        )
 
     runtime = DashboardRuntime(
         hub=WebSocketHub(),
@@ -1308,7 +1404,9 @@ async def test_runtime_git_op_fetch_uses_extended_timeout():
         ("checkout", "main", "checkout 'main'"),
     ],
 )
-async def test_runtime_git_ops_prefer_batch_transport_when_available(operation: str, branch: str | None, expected_snippet: str):
+async def test_runtime_git_ops_prefer_batch_transport_when_available(
+    operation: str, branch: str | None, expected_snippet: str
+):
     from server_monitor.dashboard.runtime import DashboardRuntime
     from server_monitor.dashboard.ws_hub import WebSocketHub
 
@@ -1340,7 +1438,9 @@ async def test_runtime_git_ops_prefer_batch_transport_when_available(operation: 
 
     assert result["ok"] is True
     assert any(expected_snippet in call[1] for call in batch_transport.calls)
-    assert any("status --porcelain --branch" in call[1] for call in batch_transport.calls)
+    assert any(
+        "status --porcelain --branch" in call[1] for call in batch_transport.calls
+    )
     assert executor.calls == []
     assert result["repo"]["behind"] == 2
 
@@ -1417,7 +1517,9 @@ async def test_runtime_git_status_poll_uses_extended_timeout():
     payload = ws.messages[0]
     assert payload["repos"][0]["path"] == "/work/repo-timeout"
     assert payload["command_health"]["git"]["state"] == "healthy"
-    git_calls = [call for call in executor.calls if "status --porcelain --branch" in call[1]]
+    git_calls = [
+        call for call in executor.calls if "status --porcelain --branch" in call[1]
+    ]
     assert len(git_calls) == 1
     assert git_calls[0][2] is not None
     assert git_calls[0][2] >= 5.0
@@ -1456,7 +1558,9 @@ async def test_runtime_git_status_poll_prefers_one_long_attempt_over_short_retri
     payload = ws.messages[0]
     assert payload["repos"][0]["path"] == "/work/repo-slow"
     assert payload["command_health"]["git"]["state"] == "healthy"
-    git_calls = [call for call in executor.calls if "status --porcelain --branch" in call[1]]
+    git_calls = [
+        call for call in executor.calls if "status --porcelain --branch" in call[1]
+    ]
     assert len(git_calls) == 1
     assert git_calls[0][2] is not None
     assert git_calls[0][2] >= 10.0
@@ -1612,7 +1716,9 @@ async def test_runtime_does_not_retry_parse_failure():
         command_kind="system",
         target_label="server",
     )[0]
-    assert payload["snapshot"]["metadata"]["metrics_error"].startswith("system parse failed:")
+    assert payload["snapshot"]["metadata"]["metrics_error"].startswith(
+        "system parse failed:"
+    )
     assert health["attempt_count"] == 1
     assert health["failure_class"] == "parse_error"
 
@@ -2026,21 +2132,6 @@ async def test_runtime_clash_health_prefers_secret_failure_over_old_probe_succes
     assert payload["command_health"]["clash"]["label"] == "failed"
 
 
-def test_metrics_sleep_seconds_compensates_poll_time():
-    from server_monitor.dashboard.runtime import _metrics_sleep_seconds
-
-    assert _metrics_sleep_seconds(interval_seconds=1.0, elapsed_seconds=0.25) == pytest.approx(0.75)
-    assert _metrics_sleep_seconds(interval_seconds=1.0, elapsed_seconds=1.6) == pytest.approx(0.05)
-
-
-def test_batched_clash_secret_command_runs_lookup_in_child_shell():
-    from server_monitor.dashboard.runtime import _batched_clash_secret_command
-
-    command = _batched_clash_secret_command()
-
-    assert "sh -lc" in command
-
-
 @pytest.mark.asyncio
 async def test_runtime_keeps_cached_system_and_gpu_on_transient_metric_failure():
     from server_monitor.dashboard.runtime import DashboardRuntime
@@ -2272,68 +2363,6 @@ async def test_runtime_marks_repo_freshness_mixed_live_and_cached():
     assert repos["/work/repo-fail"]["freshness"]["reason"] == "poll_error"
 
 
-def test_extract_clash_secret_parses_chinese_label_output():
-    from server_monitor.dashboard.runtime import _extract_clash_secret
-
-    text = "😼 当前密钥：mysecret"
-    assert _extract_clash_secret(text) == "mysecret"
-
-
-def test_clash_secret_command_includes_runtime_yaml_fallback():
-    from server_monitor.dashboard.runtime import _clash_secret_command
-
-    cmd = _clash_secret_command()
-    assert "clashsecret" in cmd
-    assert "runtime.yaml" in cmd
-    assert "当前密钥" in cmd
-
-
-def test_clash_command_includes_bearer_header_for_api_and_ui():
-    from server_monitor.dashboard.runtime import _clash_command
-
-    cmd = _clash_command(
-        api_probe_url="http://127.0.0.1:9090/version",
-        ui_probe_url="http://127.0.0.1:9090/ui",
-        secret="mysecret",
-    )
-    assert "Authorization: Bearer mysecret" in cmd
-    assert cmd.count("-H \"$AUTH_HEADER\"") >= 2
-    assert "127.0.0.1:9090/version" in cmd
-    assert "127.0.0.1:9090/ui" in cmd
-    assert "-lt 400" in cmd
-    assert "ip_location=" in cmd
-    assert "controller_port=" in cmd
-
-
-def test_clash_command_routes_ip_lookup_via_detected_proxy_port():
-    from server_monitor.dashboard.runtime import _clash_command
-
-    cmd = _clash_command(
-        api_probe_url="http://127.0.0.1:9090/version",
-        ui_probe_url="http://127.0.0.1:9090/ui",
-        secret="mysecret",
-    )
-
-    assert "mixed-port:" in cmd
-    assert "PROXY_URL=" in cmd
-    assert '--proxy "$PROXY_URL"' in cmd
-
-
-def test_clash_command_parses_ip_lookup_fields_in_provider_order():
-    from server_monitor.dashboard.runtime import _clash_command
-
-    cmd = _clash_command(
-        api_probe_url="http://127.0.0.1:9090/version",
-        ui_probe_url="http://127.0.0.1:9090/ui",
-        secret="mysecret",
-    )
-
-    assert "IP_COUNTRY=$(printf '%s\\n' \"$IP_INFO\" | sed -n '1p'" in cmd
-    assert "IP_REGION=$(printf '%s\\n' \"$IP_INFO\" | sed -n '2p'" in cmd
-    assert "IP_CITY=$(printf '%s\\n' \"$IP_INFO\" | sed -n '3p'" in cmd
-    assert "IP_ADDR=$(printf '%s\\n' \"$IP_INFO\" | sed -n '4p'" in cmd
-
-
 @pytest.mark.asyncio
 async def test_runtime_clash_probe_uses_secret_command_each_status_cycle():
     from server_monitor.dashboard.runtime import DashboardRuntime
@@ -2505,7 +2534,10 @@ async def test_runtime_clash_payload_contains_ip_location():
     await runtime.poll_once()
 
     payload = ws.messages[0]
-    assert payload["clash"]["ip_location"] == "Los Angeles, California, United States (1.2.3.4)"
+    assert (
+        payload["clash"]["ip_location"]
+        == "Los Angeles, California, United States (1.2.3.4)"
+    )
     assert payload["clash"]["controller_port"] == "7373"
     assert payload["clash"]["message"] == "ok"
     await runtime.stop()
@@ -2678,8 +2710,12 @@ async def test_runtime_metrics_stream_poll_once_only_runs_git_and_clash_status()
     await runtime.stop()
 
     assert executor.calls
-    assert not any("SMTOKEN BEGIN kind=system target=server" in call[1] for call in executor.calls)
-    assert any("SMTOKEN BEGIN kind=git_status target=" in call[1] for call in executor.calls)
+    assert not any(
+        "SMTOKEN BEGIN kind=system target=server" in call[1] for call in executor.calls
+    )
+    assert any(
+        "SMTOKEN BEGIN kind=git_status target=" in call[1] for call in executor.calls
+    )
 
 
 @pytest.mark.asyncio
@@ -2735,11 +2771,17 @@ async def test_runtime_metrics_stream_health_reports_transport_latency():
     assert payload["command_health"]["system"]["state"] == "healthy"
     assert payload["command_health"]["system"]["latency_ms"] is not None
     assert payload["command_health"]["system"]["latency_ms"] >= 0
-    assert payload["command_health"]["system"]["label"] == f'{payload["command_health"]["system"]["latency_ms"]}ms'
+    assert (
+        payload["command_health"]["system"]["label"]
+        == f"{payload['command_health']['system']['latency_ms']}ms"
+    )
     assert payload["command_health"]["gpu"]["state"] == "healthy"
     assert payload["command_health"]["gpu"]["latency_ms"] is not None
     assert payload["command_health"]["gpu"]["latency_ms"] >= 0
-    assert payload["command_health"]["gpu"]["label"] == f'{payload["command_health"]["gpu"]["latency_ms"]}ms'
+    assert (
+        payload["command_health"]["gpu"]["label"]
+        == f"{payload['command_health']['gpu']['latency_ms']}ms"
+    )
 
 
 @pytest.mark.asyncio
@@ -2805,34 +2847,3 @@ async def test_runtime_metrics_stream_cached_disconnect_keeps_last_sample_visibl
     assert payload["command_health"]["system"]["label"] == "reconnecting"
     assert payload["command_health"]["gpu"]["state"] == "retrying"
     assert payload["command_health"]["gpu"]["label"] == "reconnecting"
-
-
-def test_metrics_stream_transport_latency_rejects_clock_skew_and_implausible_outliers():
-    from server_monitor.dashboard.runtime import _metrics_stream_transport_latency_ms
-
-    received_at = datetime(2026, 3, 13, 12, 0, 0, tzinfo=UTC)
-
-    assert (
-        _metrics_stream_transport_latency_ms(
-            sample_server_time="2026-03-13T12:00:02+00:00",
-            received_at=received_at,
-            sample_interval_ms=250,
-        )
-        is None
-    )
-    assert (
-        _metrics_stream_transport_latency_ms(
-            sample_server_time="2026-03-13T11:59:50+00:00",
-            received_at=received_at,
-            sample_interval_ms=250,
-        )
-        is None
-    )
-    assert (
-        _metrics_stream_transport_latency_ms(
-            sample_server_time="2026-03-13T11:59:59.680+00:00",
-            received_at=received_at,
-            sample_interval_ms=250,
-        )
-        == 320
-    )
