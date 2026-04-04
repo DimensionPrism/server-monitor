@@ -88,8 +88,12 @@ def default_command_policies() -> dict[CommandKind, CommandPolicy]:
     """Return the default policy table for dashboard commands."""
 
     return {
-        CommandKind.SYSTEM: CommandPolicy(timeout_seconds=3.0, max_attempts=2, base_backoff_seconds=0.1),
-        CommandKind.GPU: CommandPolicy(timeout_seconds=3.0, max_attempts=2, base_backoff_seconds=0.1),
+        CommandKind.SYSTEM: CommandPolicy(
+            timeout_seconds=3.0, max_attempts=2, base_backoff_seconds=0.1
+        ),
+        CommandKind.GPU: CommandPolicy(
+            timeout_seconds=3.0, max_attempts=2, base_backoff_seconds=0.1
+        ),
         CommandKind.GIT_STATUS: CommandPolicy(
             timeout_seconds=10.0,
             max_attempts=1,
@@ -147,7 +151,13 @@ def classify_failure(*, error: str | None, stderr: str) -> str:
 def redact_sensitive_text(text: str) -> str:
     """Remove obvious secret-bearing tokens from diagnostic text."""
 
-    redacted = re.sub(r"(authorization:\s*bearer\s+)\S+", r"\1[REDACTED]", text, flags=re.IGNORECASE)
-    redacted = re.sub(r"(secret\s*[:=]\s*)\S+", r"\1[REDACTED]", redacted, flags=re.IGNORECASE)
-    redacted = re.sub(r"(当前密钥\s*[:：]\s*)\S+", r"\1[REDACTED]", redacted, flags=re.IGNORECASE)
+    redacted = re.sub(
+        r"(authorization:\s*bearer\s+)\S+", r"\1[REDACTED]", text, flags=re.IGNORECASE
+    )
+    redacted = re.sub(
+        r"(secret\s*[:=]\s*)\S+", r"\1[REDACTED]", redacted, flags=re.IGNORECASE
+    )
+    redacted = re.sub(
+        r"(当前密钥\s*[:：]\s*)\S+", r"\1[REDACTED]", redacted, flags=re.IGNORECASE
+    )
     return redacted
