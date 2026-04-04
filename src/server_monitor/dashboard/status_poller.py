@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-from contextlib import suppress
 from datetime import datetime
 from types import SimpleNamespace
 from typing import TYPE_CHECKING
@@ -50,19 +49,6 @@ class StatusPoller:
         if task is None or not task.done():
             return
         self._runtime._consume_status_poll_task_result(server_id, task)
-
-    def _consume_status_poll_task_result(
-        self, server_id: str, task: asyncio.Task
-    ) -> None:
-        current = self._runtime._status_poll_tasks.get(server_id)
-        if current is task:
-            self._runtime._status_poll_tasks.pop(server_id, None)
-        with suppress(asyncio.CancelledError):
-            try:
-                task.result()
-            except Exception:
-                self._runtime._git_last_poll_ok[server_id] = False
-                self._runtime._clash_last_poll_ok[server_id] = False
 
     async def start_status_poll_if_needed(self, *, server, now: datetime) -> None:
         existing = self._runtime._status_poll_tasks.get(server.server_id)
