@@ -27,20 +27,20 @@ from server_monitor.dashboard.command_executor import (
     CommandExecutor,
     _PolicyExecutionOutcome,
 )
+from server_monitor.dashboard.panels.command_builders import (
+    _git_operation_command,
+    _git_status_command,
+)
 from server_monitor.dashboard.runtime.runtime_helpers import (
     DEFAULT_CLASH,
     GIT_OPERATION_TIMEOUT_SECONDS,
     STATUS_COMMAND_TIMEOUT_SECONDS,  # noqa: F401
     _needs_status_poll,
     _metrics_sleep_seconds,
-    _git_status_command,
-    _git_operation_command,
-    _serialize_runtime_settings,
     _is_ssh_unreachable,
     _find_server,
     _build_freshness_entry,
     _metrics_stream_transport_latency_ms,
-    _extract_clash_secret,  # noqa: F401
     _empty_repo_status,
 )
 
@@ -839,7 +839,7 @@ class DashboardRuntime:
 
         return {
             "generated_at": datetime.now(UTC).isoformat(),
-            "settings": _serialize_runtime_settings(settings),
+            "settings": settings.to_dict(),
             "servers": [servers[server_id] for server_id in sorted(servers.keys())],
         }
 

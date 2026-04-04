@@ -19,7 +19,7 @@ def test_metrics_sleep_seconds_compensates_poll_time():
 
 
 def test_batched_clash_secret_command_runs_lookup_in_child_shell():
-    from server_monitor.dashboard.runtime.runtime_helpers import (
+    from server_monitor.dashboard.panels.command_builders import (
         _batched_clash_secret_command,
     )
 
@@ -29,14 +29,14 @@ def test_batched_clash_secret_command_runs_lookup_in_child_shell():
 
 
 def test_extract_clash_secret_parses_chinese_label_output():
-    from server_monitor.dashboard.runtime.runtime_helpers import _extract_clash_secret
+    from server_monitor.dashboard.panels.command_builders import _extract_clash_secret
 
     text = "😼 当前密钥：mysecret"
     assert _extract_clash_secret(text) == "mysecret"
 
 
 def test_clash_secret_command_includes_runtime_yaml_fallback():
-    from server_monitor.dashboard.runtime.runtime_helpers import _clash_secret_command
+    from server_monitor.dashboard.panels.command_builders import _clash_secret_command
 
     cmd = _clash_secret_command()
     assert "clashsecret" in cmd
@@ -45,7 +45,7 @@ def test_clash_secret_command_includes_runtime_yaml_fallback():
 
 
 def test_clash_command_includes_bearer_header_for_api_and_ui():
-    from server_monitor.dashboard.runtime.runtime_helpers import _clash_command
+    from server_monitor.dashboard.panels.command_builders import _clash_command
 
     cmd = _clash_command(
         api_probe_url="http://127.0.0.1:9090/version",
@@ -62,7 +62,7 @@ def test_clash_command_includes_bearer_header_for_api_and_ui():
 
 
 def test_clash_command_routes_ip_lookup_via_detected_proxy_port():
-    from server_monitor.dashboard.runtime.runtime_helpers import _clash_command
+    from server_monitor.dashboard.panels.command_builders import _clash_command
 
     cmd = _clash_command(
         api_probe_url="http://127.0.0.1:9090/version",
@@ -76,7 +76,7 @@ def test_clash_command_routes_ip_lookup_via_detected_proxy_port():
 
 
 def test_clash_command_parses_ip_lookup_fields_in_provider_order():
-    from server_monitor.dashboard.runtime.runtime_helpers import _clash_command
+    from server_monitor.dashboard.panels.command_builders import _clash_command
 
     cmd = _clash_command(
         api_probe_url="http://127.0.0.1:9090/version",

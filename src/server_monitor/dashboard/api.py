@@ -72,29 +72,6 @@ class GitOpenTerminalPayload(BaseModel):
 SAFE_GIT_OPERATIONS = {"refresh", "fetch", "pull", "checkout"}
 
 
-def _serialize_settings(settings: DashboardSettings) -> dict:
-    return {
-        "metrics_interval_seconds": settings.metrics_interval_seconds,
-        "status_interval_seconds": settings.status_interval_seconds,
-        "notifications": {
-            "desktop_enabled": settings.notifications.desktop_enabled,
-            "webhook_enabled": settings.notifications.webhook_enabled,
-            "webhook_url": settings.notifications.webhook_url,
-        },
-        "servers": [
-            {
-                "server_id": server.server_id,
-                "ssh_alias": server.ssh_alias,
-                "working_dirs": server.working_dirs,
-                "enabled_panels": server.enabled_panels,
-                "clash_api_probe_url": server.clash_api_probe_url,
-                "clash_ui_probe_url": server.clash_ui_probe_url,
-            }
-            for server in settings.servers
-        ],
-    }
-
-
 def _require_store(
     settings_store: DashboardSettingsStore | None,
 ) -> DashboardSettingsStore:
@@ -160,10 +137,12 @@ async def _try_read_clash_secret(*, runtime, ssh_alias: str) -> str | None:
     if executor is None or not hasattr(executor, "run"):
         return None
 
-    from server_monitor.dashboard.runtime.runtime_helpers import (
-        STATUS_COMMAND_TIMEOUT_SECONDS,
+    from server_monitor.dashboard.panels.command_builders import (
         _clash_secret_command,
         _extract_clash_secret,
+    )
+    from server_monitor.dashboard.runtime.runtime_helpers import (
+        STATUS_COMMAND_TIMEOUT_SECONDS,
     )
 
     secret_command = _clash_secret_command()
@@ -228,7 +207,7 @@ def create_dashboard_app(
     @app.get("/api/settings")
     def get_settings() -> dict:
         store = _require_store(settings_store)
-        return _serialize_settings(store.load())
+        return store.load().to_dict()
 
     @app.put("/api/settings/notifications")
     def update_notification_settings(payload: NotificationSettingsPayload) -> dict:
@@ -240,7 +219,7 @@ def create_dashboard_app(
             webhook_url=payload.webhook_url,
         )
         store.save(settings)
-        return _serialize_settings(store.load())
+        return store.load().to_dict()
 
     @app.get("/api/diagnostics")
     def get_diagnostics() -> dict:
@@ -265,7 +244,7 @@ def create_dashboard_app(
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT, detail=str(exc)
             ) from exc
-        return _serialize_settings(store.load())
+        return store.load().to_dict()
 
     @app.put("/api/servers/{server_id}")
     def update_server(server_id: str, payload: ServerPayload) -> dict:
@@ -291,7 +270,7 @@ def create_dashboard_app(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"unknown server '{server_id}'",
             ) from exc
-        return _serialize_settings(store.load())
+        return store.load().to_dict()
 
     @app.delete("/api/servers/{server_id}", status_code=status.HTTP_204_NO_CONTENT)
     def delete_server(server_id: str) -> None:
@@ -306,7 +285,7 @@ def create_dashboard_app(
         if payload.path not in server.working_dirs:
             server.working_dirs.append(payload.path)
             store.update_server(server_id, server)
-        return _serialize_settings(store.load())
+        return store.load().to_dict()
 
     @app.delete("/api/servers/{server_id}/working-dirs")
     def remove_working_dir(server_id: str, payload: PathPayload) -> dict:
@@ -317,7 +296,7 @@ def create_dashboard_app(
             item for item in server.working_dirs if item != payload.path
         ]
         store.update_server(server_id, server)
-        return _serialize_settings(store.load())
+        return store.load().to_dict()
 
     @app.put("/api/servers/{server_id}/panels")
     def update_panels(server_id: str, payload: PanelsPayload) -> dict:
@@ -326,7 +305,7 @@ def create_dashboard_app(
         server = _find_server(settings, server_id)
         server.enabled_panels = payload.enabled_panels
         store.update_server(server_id, server)
-        return _serialize_settings(store.load())
+        return store.load().to_dict()
 
     @app.post("/api/servers/{server_id}/git/ops")
     async def run_git_op(server_id: str, payload: GitOpPayload) -> dict:

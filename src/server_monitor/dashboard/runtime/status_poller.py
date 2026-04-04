@@ -14,6 +14,16 @@ from server_monitor.dashboard.metrics.batch_protocol import (
     parse_batch_output,
 )
 from server_monitor.dashboard.health.command_policy import CommandKind
+from server_monitor.dashboard.panels.command_builders import (
+    _batched_clash_probe_command,
+    _batched_clash_secret_command,
+    _clash_command,
+    _clash_secret_command,
+    _git_status_command,
+    _gpu_command,
+    _parse_required_clash_secret,
+    _system_command,
+)
 from server_monitor.dashboard.panels.parsers.clash import parse_clash_status
 from server_monitor.dashboard.panels.parsers.git_status import parse_repo_status
 from server_monitor.dashboard.panels.parsers.gpu import parse_gpu_snapshot
@@ -21,15 +31,8 @@ from server_monitor.dashboard.panels.parsers.system import parse_system_snapshot
 from server_monitor.dashboard.runtime.runtime_helpers import (
     DEFAULT_CLASH,
     STATUS_POLL_INLINE_BUDGET_SECONDS,
-    _batched_clash_secret_command,
-    _batched_clash_probe_command,
-    _clash_command,
-    _clash_secret_command,
-    _git_status_command,
-    _gpu_command,
+    _empty_system_snapshot,
     _group_batch_sections,
-    _parse_required_clash_secret,
-    _system_command,
 )
 
 if TYPE_CHECKING:
@@ -533,10 +536,6 @@ class StatusPoller:
         }
 
     def build_cached_snapshot(self, *, server_id: str, now: datetime) -> dict:
-        from server_monitor.dashboard.runtime.runtime_helpers import (
-            _empty_system_snapshot,
-        )
-
         cached_system = self._runtime._system_cache.get(
             server_id, _empty_system_snapshot()
         )

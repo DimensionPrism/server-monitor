@@ -31,7 +31,9 @@ class ServerSettings:
     server_id: str
     ssh_alias: str
     working_dirs: list[str] = field(default_factory=list)
-    enabled_panels: list[PanelName] = field(default_factory=lambda: ["system", "gpu", "git", "clash"])
+    enabled_panels: list[PanelName] = field(
+        default_factory=lambda: ["system", "gpu", "git", "clash"]
+    )
     clash_api_probe_url: str = "http://127.0.0.1:9090/version"
     clash_ui_probe_url: str = "http://127.0.0.1:9090/ui"
 
@@ -44,6 +46,28 @@ class DashboardSettings:
     status_interval_seconds: float = 12.0
     notifications: NotificationSettings = field(default_factory=NotificationSettings)
     servers: list[ServerSettings] = field(default_factory=list)
+
+    def to_dict(self) -> dict:
+        return {
+            "metrics_interval_seconds": self.metrics_interval_seconds,
+            "status_interval_seconds": self.status_interval_seconds,
+            "notifications": {
+                "desktop_enabled": self.notifications.desktop_enabled,
+                "webhook_enabled": self.notifications.webhook_enabled,
+                "webhook_url": self.notifications.webhook_url,
+            },
+            "servers": [
+                {
+                    "server_id": server.server_id,
+                    "ssh_alias": server.ssh_alias,
+                    "working_dirs": server.working_dirs,
+                    "enabled_panels": server.enabled_panels,
+                    "clash_api_probe_url": server.clash_api_probe_url,
+                    "clash_ui_probe_url": server.clash_ui_probe_url,
+                }
+                for server in self.servers
+            ],
+        }
 
 
 class DashboardSettingsStore:
@@ -63,9 +87,15 @@ class DashboardSettingsStore:
                 server_id=item["server_id"],
                 ssh_alias=item["ssh_alias"],
                 working_dirs=list(item.get("working_dirs", [])),
-                enabled_panels=list(item.get("enabled_panels", ["system", "gpu", "git", "clash"])),
-                clash_api_probe_url=str(item.get("clash_api_probe_url", "http://127.0.0.1:9090/version")),
-                clash_ui_probe_url=str(item.get("clash_ui_probe_url", "http://127.0.0.1:9090/ui")),
+                enabled_panels=list(
+                    item.get("enabled_panels", ["system", "gpu", "git", "clash"])
+                ),
+                clash_api_probe_url=str(
+                    item.get("clash_api_probe_url", "http://127.0.0.1:9090/version")
+                ),
+                clash_ui_probe_url=str(
+                    item.get("clash_ui_probe_url", "http://127.0.0.1:9090/ui")
+                ),
             )
             for item in raw.get("servers", [])
         ]
@@ -102,7 +132,9 @@ class DashboardSettingsStore:
             ],
         }
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        fd, temp_path = tempfile.mkstemp(prefix="servers-", suffix=".toml", dir=str(self.path.parent))
+        fd, temp_path = tempfile.mkstemp(
+            prefix="servers-", suffix=".toml", dir=str(self.path.parent)
+        )
         os.close(fd)
         try:
             with Path(temp_path).open("w", encoding="utf-8") as handle:
@@ -129,5 +161,7 @@ class DashboardSettingsStore:
 
     def delete_server(self, server_id: str) -> None:
         settings = self.load()
-        settings.servers = [server for server in settings.servers if server.server_id != server_id]
+        settings.servers = [
+            server for server in settings.servers if server.server_id != server_id
+        ]
         self.save(settings)

@@ -14,6 +14,8 @@ from server_monitor.dashboard.health.command_policy import (
 if TYPE_CHECKING:
     from server_monitor.dashboard.settings import ServerSettings
 
+COMMAND_HEALTH_HISTORY_LIMIT = 20
+
 
 def _unknown_command_health_summary() -> dict:
     return {
@@ -116,9 +118,6 @@ class CommandHealthTracker:
         key = (record.server_id, record.command_kind.value, record.target_label)
         history = self._runtime._recent_command_health.setdefault(key, [])
         history.append(record)
-        from server_monitor.dashboard.runtime.runtime_helpers import (
-            COMMAND_HEALTH_HISTORY_LIMIT,
-        )
 
         if len(history) > COMMAND_HEALTH_HISTORY_LIMIT:
             history.pop(0)
