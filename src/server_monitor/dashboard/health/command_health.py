@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from server_monitor.dashboard.command_policy import (
+from server_monitor.dashboard.health.command_policy import (
     CommandHealthRecord,
     CommandKind,
     CommandPolicy,

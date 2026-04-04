@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 import re
 from typing import TYPE_CHECKING
 
-from server_monitor.dashboard.command_policy import CommandPolicy
+from server_monitor.dashboard.health.command_policy import CommandPolicy
 
 if TYPE_CHECKING:
     from server_monitor.dashboard.settings import ServerSettings

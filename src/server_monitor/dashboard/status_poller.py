@@ -13,7 +13,7 @@ from server_monitor.dashboard.batch_protocol import (
     build_status_batch_command,
     parse_batch_output,
 )
-from server_monitor.dashboard.command_policy import CommandKind
+from server_monitor.dashboard.health.command_policy import CommandKind
 from server_monitor.dashboard.parsers.clash import parse_clash_status
 from server_monitor.dashboard.parsers.git_status import parse_repo_status
 from server_monitor.dashboard.parsers.gpu import parse_gpu_snapshot
