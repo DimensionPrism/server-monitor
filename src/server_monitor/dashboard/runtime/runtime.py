@@ -7,7 +7,7 @@ from contextlib import suppress
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 
-from server_monitor.dashboard.status_poller import StatusPoller
+from server_monitor.dashboard.runtime.status_poller import StatusPoller
 from server_monitor.dashboard.health.command_policy import (
     CommandHealthRecord,
     CommandKind,
@@ -15,19 +15,19 @@ from server_monitor.dashboard.health.command_policy import (
     FailureTracker,
     default_command_policies,
 )
-from server_monitor.dashboard.command_runner import CommandRunner
-from server_monitor.dashboard.parsers.git_status import parse_repo_status
+from server_monitor.dashboard.ssh.command_runner import CommandRunner
+from server_monitor.dashboard.panels.parsers.git_status import parse_repo_status
 from server_monitor.dashboard.normalize import normalize_server_payload
 from server_monitor.dashboard.settings import DashboardSettingsStore, ServerSettings
 from server_monitor.dashboard.terminal_launcher import open_terminal_with_ssh
 from server_monitor.dashboard.ws_hub import WebSocketHub
-from server_monitor.dashboard.git_operations import GitOperations
+from server_monitor.dashboard.panels.git_operations import GitOperations
 from server_monitor.dashboard.health.command_health import CommandHealthTracker
 from server_monitor.dashboard.command_executor import (
     CommandExecutor,
     _PolicyExecutionOutcome,
 )
-from server_monitor.dashboard.runtime_helpers import (
+from server_monitor.dashboard.runtime.runtime_helpers import (
     DEFAULT_CLASH,
     GIT_OPERATION_TIMEOUT_SECONDS,
     STATUS_COMMAND_TIMEOUT_SECONDS,  # noqa: F401

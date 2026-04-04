@@ -7,18 +7,18 @@ from datetime import datetime
 from types import SimpleNamespace
 from typing import TYPE_CHECKING
 
-from server_monitor.dashboard.batch_protocol import (
+from server_monitor.dashboard.metrics.batch_protocol import (
     BatchProtocolError,
     build_metrics_batch_command,
     build_status_batch_command,
     parse_batch_output,
 )
 from server_monitor.dashboard.health.command_policy import CommandKind
-from server_monitor.dashboard.parsers.clash import parse_clash_status
-from server_monitor.dashboard.parsers.git_status import parse_repo_status
-from server_monitor.dashboard.parsers.gpu import parse_gpu_snapshot
-from server_monitor.dashboard.parsers.system import parse_system_snapshot
-from server_monitor.dashboard.runtime_helpers import (
+from server_monitor.dashboard.panels.parsers.clash import parse_clash_status
+from server_monitor.dashboard.panels.parsers.git_status import parse_repo_status
+from server_monitor.dashboard.panels.parsers.gpu import parse_gpu_snapshot
+from server_monitor.dashboard.panels.parsers.system import parse_system_snapshot
+from server_monitor.dashboard.runtime.runtime_helpers import (
     DEFAULT_CLASH,
     STATUS_POLL_INLINE_BUDGET_SECONDS,
     _batched_clash_secret_command,
@@ -33,7 +33,7 @@ from server_monitor.dashboard.runtime_helpers import (
 )
 
 if TYPE_CHECKING:
-    from server_monitor.dashboard.runtime import _PolicyExecutionOutcome
+    from server_monitor.dashboard.runtime.runtime import _PolicyExecutionOutcome
 
 
 class StatusPoller:
@@ -533,7 +533,9 @@ class StatusPoller:
         }
 
     def build_cached_snapshot(self, *, server_id: str, now: datetime) -> dict:
-        from server_monitor.dashboard.runtime_helpers import _empty_system_snapshot
+        from server_monitor.dashboard.runtime.runtime_helpers import (
+            _empty_system_snapshot,
+        )
 
         cached_system = self._runtime._system_cache.get(
             server_id, _empty_system_snapshot()
