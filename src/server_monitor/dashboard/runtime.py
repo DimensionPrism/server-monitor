@@ -23,7 +23,10 @@ from server_monitor.dashboard.terminal_launcher import open_terminal_with_ssh
 from server_monitor.dashboard.ws_hub import WebSocketHub
 from server_monitor.dashboard.git_operations import GitOperations
 from server_monitor.dashboard.command_health import CommandHealthTracker
-from server_monitor.dashboard.command_executor import CommandExecutor
+from server_monitor.dashboard.command_executor import (
+    CommandExecutor,
+    _PolicyExecutionOutcome,
+)
 from server_monitor.dashboard.runtime_helpers import (
     DEFAULT_CLASH,
     GIT_OPERATION_TIMEOUT_SECONDS,
@@ -40,25 +43,6 @@ from server_monitor.dashboard.runtime_helpers import (
     _extract_clash_secret,  # noqa: F401
     _empty_repo_status,
 )
-
-
-@dataclass(slots=True)
-class _PolicyExecutionOutcome:
-    result: object
-    parsed: object | None
-    failure_class: str
-    attempt_count: int
-    message: str
-    had_host_unreachable: bool = False
-    host_unreachable_message: str = ""
-
-
-@dataclass(slots=True)
-class _SkippedCommandResult:
-    stdout: str = ""
-    stderr: str = ""
-    exit_code: int = -1
-    error: str | None = "cooldown_skip"
 
 
 @dataclass(slots=True)
