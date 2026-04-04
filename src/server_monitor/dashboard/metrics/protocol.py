@@ -71,7 +71,9 @@ def _require_str(payload: dict, field_name: str) -> str:
 def _require_gpu_list(payload: dict, field_name: str) -> list[dict]:
     value = _require_field(payload, field_name)
     if not isinstance(value, list) or any(not isinstance(item, dict) for item in value):
-        raise MetricsStreamProtocolError(f"field '{field_name}' must be a list of objects")
+        raise MetricsStreamProtocolError(
+            f"field '{field_name}' must be a list of objects"
+        )
     return value
 
 

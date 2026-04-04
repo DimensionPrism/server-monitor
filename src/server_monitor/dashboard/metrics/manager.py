@@ -8,7 +8,10 @@ from contextlib import suppress
 import inspect
 
 from server_monitor.dashboard.metrics_stream_command import build_metrics_stream_command
-from server_monitor.dashboard.metrics_stream_protocol import MetricsStreamProtocolError, parse_metrics_stream_line
+from server_monitor.dashboard.metrics_stream_protocol import (
+    MetricsStreamProtocolError,
+    parse_metrics_stream_line,
+)
 
 
 class MetricsStreamManager:
@@ -64,13 +67,18 @@ class MetricsStreamManager:
                 await self._stop_server_task(server_id)
 
         for server_id, server in desired_servers.items():
-            if server_id in self._tasks and self._server_aliases.get(server_id) == server.ssh_alias:
+            if (
+                server_id in self._tasks
+                and self._server_aliases.get(server_id) == server.ssh_alias
+            ):
                 continue
             if server_id in self._tasks:
                 await self._stop_server_task(server_id)
             if self._stop_event.is_set():
                 continue
-            task = asyncio.create_task(self._run_server(server), name=f"metrics-stream-{server.server_id}")
+            task = asyncio.create_task(
+                self._run_server(server), name=f"metrics-stream-{server.server_id}"
+            )
             self._tasks[server.server_id] = task
             self._server_aliases[server.server_id] = server.ssh_alias
 
@@ -97,8 +105,12 @@ class MetricsStreamManager:
         try:
             reconnect_attempt = 0
             while not self._stop_event.is_set():
-                await _maybe_await(self._on_state_change(server.server_id, "connecting"))
-                process = await self._process_factory(server.ssh_alias, self._command_builder())
+                await _maybe_await(
+                    self._on_state_change(server.server_id, "connecting")
+                )
+                process = await self._process_factory(
+                    server.ssh_alias, self._command_builder()
+                )
                 self._processes[server.server_id] = process
                 should_reconnect = False
                 parse_failures = 0
@@ -125,7 +137,9 @@ class MetricsStreamManager:
                         parse_failures = 0
                         reconnect_attempt = 0
                         await _maybe_await(self._on_sample(server.server_id, sample))
-                        await _maybe_await(self._on_state_change(server.server_id, "live"))
+                        await _maybe_await(
+                            self._on_state_change(server.server_id, "live")
+                        )
                 finally:
                     self._processes.pop(server.server_id, None)
                     await _close_process(process)
@@ -133,8 +147,12 @@ class MetricsStreamManager:
                 if self._stop_event.is_set() or not should_reconnect:
                     break
 
-                await _maybe_await(self._on_state_change(server.server_id, "reconnecting"))
-                delay = self._reconnect_delays[min(reconnect_attempt, len(self._reconnect_delays) - 1)]
+                await _maybe_await(
+                    self._on_state_change(server.server_id, "reconnecting")
+                )
+                delay = self._reconnect_delays[
+                    min(reconnect_attempt, len(self._reconnect_delays) - 1)
+                ]
                 reconnect_attempt += 1
                 await self._sleep_func(delay)
         finally:

@@ -15,8 +15,12 @@ def build_metrics_stream_command(
     """Return a POSIX-shell metrics loop that emits one JSON sample per line."""
 
     normalized_sample_interval = max(0.1, float(sample_interval_seconds))
-    normalized_disk_interval = max(normalized_sample_interval, float(disk_interval_seconds))
-    disk_refresh_ticks = max(1, int(round(normalized_disk_interval / normalized_sample_interval)))
+    normalized_disk_interval = max(
+        normalized_sample_interval, float(disk_interval_seconds)
+    )
+    disk_refresh_ticks = max(
+        1, int(round(normalized_disk_interval / normalized_sample_interval))
+    )
     tegrastats_refresh_ticks = 1
     sample_interval_ms = int(round(normalized_sample_interval * 1000))
     sleep_text = _format_decimal(normalized_sample_interval)

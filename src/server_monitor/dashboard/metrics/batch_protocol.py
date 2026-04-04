@@ -31,7 +31,9 @@ def parse_batch_output(output: str, *, token: str) -> list[BatchSection]:
         if raw_line.startswith(f"{token} BEGIN "):
             if current_meta is not None:
                 raise BatchProtocolError("nested batch section")
-            current_meta = _parse_metadata(raw_line[len(f"{token} BEGIN ") :].rstrip("\r\n"))
+            current_meta = _parse_metadata(
+                raw_line[len(f"{token} BEGIN ") :].rstrip("\r\n")
+            )
             current_lines = []
             continue
 
@@ -61,14 +63,20 @@ def parse_batch_output(output: str, *, token: str) -> list[BatchSection]:
     return sections
 
 
-def build_metrics_batch_command(*, token: str, system_command: str, gpu_command: str) -> str:
+def build_metrics_batch_command(
+    *, token: str, system_command: str, gpu_command: str
+) -> str:
     """Build one remote shell command for the system and GPU panels."""
 
     return " ".join(
         [
             "set +e;",
-            _build_section_command(token=token, kind="system", target="server", command=system_command),
-            _build_section_command(token=token, kind="gpu", target="server", command=gpu_command),
+            _build_section_command(
+                token=token, kind="system", target="server", command=system_command
+            ),
+            _build_section_command(
+                token=token, kind="gpu", target="server", command=gpu_command
+            ),
         ]
     )
 
@@ -84,7 +92,11 @@ def build_status_batch_command(
 
     sections = ["set +e;"]
     for target, command in git_commands:
-        sections.append(_build_section_command(token=token, kind="git_status", target=target, command=command))
+        sections.append(
+            _build_section_command(
+                token=token, kind="git_status", target=target, command=command
+            )
+        )
     sections.append(
         _build_section_command(
             token=token,
@@ -131,17 +143,17 @@ def _build_section_command(*, token: str, kind: str, target: str, command: str) 
         "__sm_out=$(mktemp); "
         "__sm_err=$(mktemp); "
         "__sm_started=$(date +%s%3N 2>/dev/null || echo 0); "
-        f"{{ {command}; }} >\"$__sm_out\" 2>\"$__sm_err\"; "
+        f'{{ {command}; }} >"$__sm_out" 2>"$__sm_err"; '
         "__sm_exit=$?; "
-        "__sm_finished=$(date +%s%3N 2>/dev/null || echo \"$__sm_started\"); "
+        '__sm_finished=$(date +%s%3N 2>/dev/null || echo "$__sm_started"); '
         "__sm_duration=$((__sm_finished-__sm_started)); "
-        f"printf {stdout_header} \"$__sm_exit\" \"$__sm_duration\"; "
-        "cat \"$__sm_out\"; "
+        f'printf {stdout_header} "$__sm_exit" "$__sm_duration"; '
+        'cat "$__sm_out"; '
         f"printf {end_marker}; "
-        "if [ -s \"$__sm_err\" ]; then "
-        f"printf {stderr_header} \"$__sm_exit\" \"$__sm_duration\"; "
-        "cat \"$__sm_err\"; "
+        'if [ -s "$__sm_err" ]; then '
+        f'printf {stderr_header} "$__sm_exit" "$__sm_duration"; '
+        'cat "$__sm_err"; '
         f"printf {end_marker}; "
         "fi; "
-        "rm -f \"$__sm_out\" \"$__sm_err\";"
+        'rm -f "$__sm_out" "$__sm_err";'
     )
