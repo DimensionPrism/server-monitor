@@ -25,21 +25,11 @@ from server_monitor.dashboard.settings import DashboardSettingsStore, ServerSett
 from server_monitor.dashboard.terminal_launcher import open_terminal_with_ssh
 from server_monitor.dashboard.ws_hub import WebSocketHub
 from server_monitor.dashboard.git_operations import GitOperations
-from server_monitor.dashboard.command_health import (
-    CommandHealthTracker,
-    _unknown_command_health_summary,
-    _command_health_summary_from_record,
-    _command_health_state_from_record,
-    _command_health_label,
-    _command_health_severity,
-    _worst_command_health_state,
-    _git_command_health_detail,
-)
+from server_monitor.dashboard.command_health import CommandHealthTracker
 from server_monitor.dashboard.runtime_helpers import (
     DEFAULT_CLASH,
     GIT_OPERATION_TIMEOUT_SECONDS,
     STATUS_COMMAND_TIMEOUT_SECONDS,  # noqa: F401
-    COMMAND_HEALTH_HISTORY_LIMIT,
     _needs_status_poll,
     _metrics_sleep_seconds,
     _git_status_command,
