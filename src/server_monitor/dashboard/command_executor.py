@@ -14,7 +14,10 @@ from server_monitor.dashboard.health.command_policy import (
     CommandPolicy,
     classify_failure,
 )
-from server_monitor.dashboard.runtime_helpers import _is_ssh_unreachable, _should_retry
+from server_monitor.dashboard.runtime.runtime_helpers import (
+    _is_ssh_unreachable,
+    _should_retry,
+)
 
 
 @dataclass(slots=True)

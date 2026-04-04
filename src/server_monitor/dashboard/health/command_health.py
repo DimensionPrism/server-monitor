@@ -116,7 +116,7 @@ class CommandHealthTracker:
         key = (record.server_id, record.command_kind.value, record.target_label)
         history = self._runtime._recent_command_health.setdefault(key, [])
         history.append(record)
-        from server_monitor.dashboard.runtime_helpers import (
+        from server_monitor.dashboard.runtime.runtime_helpers import (
             COMMAND_HEALTH_HISTORY_LIMIT,
         )
 

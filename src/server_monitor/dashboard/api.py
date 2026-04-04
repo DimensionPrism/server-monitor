@@ -160,11 +160,11 @@ async def _try_read_clash_secret(*, runtime, ssh_alias: str) -> str | None:
     if executor is None or not hasattr(executor, "run"):
         return None
 
-        from server_monitor.dashboard.runtime.runtime_helpers import (
-            STATUS_COMMAND_TIMEOUT_SECONDS,
-            _clash_secret_command,
-            _extract_clash_secret,
-        )
+    from server_monitor.dashboard.runtime.runtime_helpers import (
+        STATUS_COMMAND_TIMEOUT_SECONDS,
+        _clash_secret_command,
+        _extract_clash_secret,
+    )
 
     secret_command = _clash_secret_command()
     try:
